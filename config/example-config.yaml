@@ -1,0 +1,6 @@
+tcp_address: "127.0.0.1:9001"
+self_id: "agent1"
+peers:
+  - name: "agent1"
+    addr: "127.0.0.1:9001"
+    master: true
