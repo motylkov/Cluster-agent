@@ -8,13 +8,13 @@ import (
 	"net/rpc/jsonrpc"
 )
 
+// NewAgentClient creates a new JSON-RPC client connection to the given address (IP:Port)
 func NewAgentClient(address string) (*rpc.Client, error) {
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
 		return nil, err
 	}
 	client := rpc.NewClientWithCodec(jsonrpc.NewClientCodec(conn))
-
 	return client, nil
 }
 
@@ -33,10 +33,9 @@ func SendAsync(c *rpc.Client, command string, handle func(*Reply, error)) {
 		handle(nil, fmt.Errorf("client is nil"))
 		return
 	}
-
 	args := Args{Message: command}
 	var reply Reply
-
+	//c.Go("AgentService.Ping", args, &reply, nil)
 	call := c.Go("AgentService.Ping", args, &reply, nil)
 	go func() {
 		<-call.Done
@@ -48,6 +47,7 @@ func SendAsync(c *rpc.Client, command string, handle func(*Reply, error)) {
 	}()
 }
 
+// SendAsyncWithErrors sends a ping command asynchronously and calls the callback with the reply and error.
 func SendAsyncWithErrors(c *rpc.Client, command string, handle func(*Reply, error)) {
 	if c == nil {
 		handle(nil, fmt.Errorf("client is nil"))
@@ -62,6 +62,7 @@ func SendAsyncWithErrors(c *rpc.Client, command string, handle func(*Reply, erro
 	}()
 }
 
+// RegisterClient sends a registration message to the server with the client's name and address.
 func RegisterClient(c *rpc.Client, name, address string) (string, error) {
 	args := Args{ID: name, Message: address}
 	var reply Reply
