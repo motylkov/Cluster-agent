@@ -1,43 +1,47 @@
+// Package comms provides client and server communication utilities for cloud-agent.
 package comms
 
 import (
-	"agent/internal/types"
+	"cloud-agent/internal/agenttypes"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/rpc"
 	"net/rpc/jsonrpc"
 )
 
-// AgentService provides RPC methods for agent commands
+// AgentService provides RPC methods for agent commands.
 type AgentService struct {
 	SelfID    string
-	agentList *types.AgentList
+	agentList *agenttypes.AgentList
 }
 
-// PingArgs represents the arguments for the Ping method
-// PingReply represents the reply for the Ping method
+// Args represents arguments for RPC methods.
 type Args struct {
 	ID      string
 	Message string
 }
 
+// Reply represents a standard reply for RPC methods.
 type Reply struct {
 	Response string
 }
 
+// ResponseReply represents an acknowledgement reply.
 type ResponseReply struct {
 	Ack bool
 }
 
-// Ping is an exported method for AgentService to satisfy net/rpc requirements
+// Ping is an exported method for AgentService to satisfy net/rpc requirements.
+// It responds to ping requests from other agents.
 func (a *AgentService) Ping(args Args, reply *Reply) error {
 	reply.Response = "Pong from " + a.SelfID + ": " + args.Message
 	log.Printf("[%s] Pong: %s", a.SelfID, args.Message)
 	return nil
 }
 
-// Register adds a new agent to the agentList with checks
+// Register adds a new agent to the agentList with checks.
 func (a *AgentService) Register(args Args, reply *Reply) error {
 	name := args.ID
 	address := args.Message
@@ -50,34 +54,35 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 			log.Printf("[SERVER] Registration refused for %s: %s", name, reason)
 			reply.Response = reason
 			return nil
-		} else {
-			log.Printf("[SERVER] Registration updating for %s: %s", name, reason)
-			oldAgent := (*a.agentList)[name]
-			if oldAgent.Client != nil {
-				oldAgent.Client.Close()
-			}
-			client, err := NewAgentClient(address)
-			if err != nil {
-				reply.Response = "failed to create new client connection"
-				return nil
-			}
-			// Create agent with active state and clear error counter
-			agent := types.Agent{Address: address, Master: false, Client: client}
-			agent.ClearErr() // This sets active=true and errorCounter=0
-			(*a.agentList)[name] = agent
-			reply.Response = "re-registered agent"
-			log.Printf("[SERVER] re-registered %s with active=%v, errorCount=%d", name, agent.Active(), agent.ErrorCount())
-			return nil
 		}
+		log.Printf("[SERVER] Registration updating for %s: %s", name, reason)
+		oldAgent := (*a.agentList)[name]
+		if oldAgent.Client != nil {
+			if err := oldAgent.Client.Close(); err != nil {
+				log.Printf("[SERVER] Error closing old client: %v", err)
+			}
+		}
+		client, err := NewAgentClient(address)
+		if err != nil {
+			reply.Response = "failed to create new client connection"
+			return fmt.Errorf("failed to create new client connection: %w", err)
+		}
+		// Create agent with active state and clear error counter
+		agent := agenttypes.Agent{Address: address, Master: false, Client: client}
+		agent.ClearErr() // This sets active=true and errorCounter=0
+		(*a.agentList)[name] = agent
+		reply.Response = "re-registered agent"
+		log.Printf("[SERVER] re-registered %s with active=%v, errorCount=%d", name, agent.Active(), agent.ErrorCount())
+		return nil
 	}
 	// Add new agent
 	client, err := NewAgentClient(address)
 	if err != nil {
 		reply.Response = "failed to create new client connection"
-		return nil
+		return fmt.Errorf("failed to create new client connection: %w", err)
 	}
 	// Create agent with active state and clear error counter
-	agent := types.Agent{Address: address, Master: false, Client: client}
+	agent := agenttypes.Agent{Address: address, Master: false, Client: client}
 	agent.ClearErr() // This sets active=true and errorCounter=0
 	(*a.agentList)[name] = agent
 	reply.Response = "registered new agent"
@@ -85,15 +90,13 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 	return nil
 }
 
-//----------------
-
-// Add an authorization stub
-func (a *AgentService) authorize(name, address string) bool {
+// authorize is a stub for agent registration authorization.
+func (a *AgentService) authorize(_ string, _ string) bool {
 	// TODO: implement real authorization logic
 	return true
 }
 
-// Add a uniq method to check for existing agent and connection status
+// uniq checks for an existing agent and connection status.
 func (a *AgentService) uniq(name, address string) (exists bool, active bool, reason string) {
 	agent, ok := (*a.agentList)[name]
 	if !ok {
@@ -124,19 +127,19 @@ func (a *AgentService) uniq(name, address string) (exists bool, active bool, rea
 	return true, false, "name already used at another address but connection is not active"
 }
 
-//----------------
-
 // StartServer starts the RPC server and returns the listener for graceful shutdown.
-func StartServer(address, selfID string, aList *types.AgentList) (net.Listener, error) {
+func StartServer(address, selfID string, aList *agenttypes.AgentList) (net.Listener, error) {
 	agent := &AgentService{
 		SelfID:    selfID,
 		agentList: aList,
 	}
-	rpc.Register(agent)
+	if err := rpc.Register(agent); err != nil {
+		return nil, fmt.Errorf("failed to register RPC service: %w", err)
+	}
 
 	ln, err := net.Listen("tcp", address)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to listen on %s: %w", address, err)
 	}
 
 	go func() {
@@ -146,7 +149,6 @@ func StartServer(address, selfID string, aList *types.AgentList) (net.Listener, 
 			if err != nil {
 				if err.Error() == "use of closed network connection" {
 					// Listener closed, exit loop
-					// return
 					break
 				}
 				log.Println("Accept error:", err)

@@ -1,74 +1,86 @@
+// Package master provides master election and coordination logic for cloud-agent.
 package master
 
 import (
-	"agent/internal/comms"
-	"agent/internal/types"
+	"cloud-agent/internal/agenttypes"
+	"cloud-agent/internal/comms"
 	"context"
 	"log"
 	"sync"
 	"time"
 )
 
+const (
+	defaultWgAddCount    = 2
+	defaultChannelBuffer = 10
+)
+
+// Command represents a command to be sent to agents.
 type Command struct {
 	CommandName string
 	Args        []string
 }
 
-type MasterService struct {
-	status_log_interval int
-	SelfID              string
-	active              bool
-	agentList           *types.AgentList
-	ticker              *time.Ticker
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	channel             chan Command
+// Service manages agent coordination and command distribution.
+type Service struct {
+	statusLogInterval int
+	SelfID            string
+	active            bool
+	agentList         *agenttypes.AgentList
+	ticker            *time.Ticker
+	ctx               context.Context
+	cancel            context.CancelFunc
+	channel           chan Command
 }
 
-func NewMasterService(id string, alist *types.AgentList, statusLogInterval int) *MasterService {
-	return &MasterService{
-		status_log_interval: statusLogInterval,
-		active:              false,
-		SelfID:              id,
-		agentList:           alist,
+// NewService creates a new Service instance.
+func NewService(id string, alist *agenttypes.AgentList, statusLogInterval int) *Service {
+	return &Service{
+		statusLogInterval: statusLogInterval,
+		active:            false,
+		SelfID:            id,
+		agentList:         alist,
 	}
 }
 
-func (master *MasterService) Running() bool {
-	return master.active
+// Running reports whether the master service is currently active.
+func (s *Service) Running() bool {
+	return s.active
 }
 
-func (master *MasterService) run() {
+// run is the main loop for the master service.
+func (s *Service) run() {
 	log.Println("[MASTER] Start master service")
 
 	wg := &sync.WaitGroup{}
-	master.ticker = time.NewTicker(time.Duration(master.status_log_interval) * time.Second) // Тикер, который срабатывает каждую status_log_interval
+	s.ticker = time.NewTicker(time.Duration(s.statusLogInterval) * time.Second)
 
-	agent := (*master.agentList)[master.SelfID]
+	agent := (*s.agentList)[s.SelfID]
 	agent.Master = false
-	(*master.agentList)[master.SelfID] = agent
+	(*s.agentList)[s.SelfID] = agent
 
-	defer master.Stop()
+	defer s.Stop()
 
 	for {
 		select {
-		case <-master.ctx.Done():
+		case <-s.ctx.Done():
 			wg.Wait()
 			return
-		case command := <-master.channel:
-			wg.Add(2)
-			master.exec("", command)
+		case command := <-s.channel:
+			wg.Add(defaultWgAddCount)
+			s.exec("", command)
 			wg.Done()
-		case <-master.ticker.C:
+		case <-s.ticker.C:
 			log.Println("ping")
-			master.channel <- Command{CommandName: "ping"}
+			s.channel <- Command{CommandName: "ping"}
 		}
 	}
 }
 
-func (master *MasterService) exec(agentname string, command Command) {
+// exec executes a command on a specific agent or all agents.
+func (s *Service) exec(agentname string, command Command) {
 	if agentname != "" {
-		agent := (*master.agentList)[agentname]
+		agent := (*s.agentList)[agentname]
 		if agent.Client == nil {
 			client, err := comms.NewAgentClient(agent.Address)
 			if err != nil {
@@ -76,17 +88,17 @@ func (master *MasterService) exec(agentname string, command Command) {
 				return
 			}
 			agent.Client = client
-			(*master.agentList)[agentname] = agent
+			(*s.agentList)[agentname] = agent
 		}
 
 		log.Println("[MASTER] Send command for "+agentname+": ", command)
 		comms.SendAsync(agent.Client, command.CommandName, pingReply)
 	} else {
 		log.Println("[MASTER] Command for all: ", command)
-		for id := range *master.agentList {
-			agent := (*master.agentList)[id]
+		for id := range *s.agentList {
+			agent := (*s.agentList)[id]
 			log.Printf("[MASTER] Checking agent %s: active=%v, address=%s, client=%v", id, agent.Active(), agent.Address, agent.Client != nil)
-			if !master.agentList.Active(id) {
+			if !s.agentList.Active(id) {
 				log.Printf("[MASTER] Skipping inactive agent %s", id)
 				continue
 			}
@@ -96,11 +108,11 @@ func (master *MasterService) exec(agentname string, command Command) {
 				if err != nil {
 					log.Printf("[MASTER] Failed to connect with agent %s: %v", id, err)
 					agent.SetErr()
-					(*master.agentList)[id] = agent
+					(*s.agentList)[id] = agent
 					continue
 				}
 				agent.Client = client
-				(*master.agentList)[id] = agent
+				(*s.agentList)[id] = agent
 			}
 
 			agentPtr := &agent
@@ -115,36 +127,34 @@ func (master *MasterService) exec(agentname string, command Command) {
 					agentPtr.ClearErr()
 					log.Printf("[MASTER] Reply from %s: %s", id, reply.Response)
 				}
-				(*master.agentList)[id] = *agentPtr
+				(*s.agentList)[id] = *agentPtr
 			})
 		}
 	}
 }
 
-func (master *MasterService) Start(ctx context.Context) chan Command {
-	master.ctx, master.cancel = context.WithCancel(ctx)
-	master.active = true
-	master.channel = make(chan Command, 10)
-
-	go master.run()
-
-	return master.channel
+// Start starts the master service and returns a command channel.
+func (s *Service) Start(ctx context.Context) chan Command {
+	s.ctx, s.cancel = context.WithCancel(ctx)
+	s.active = true
+	s.channel = make(chan Command, defaultChannelBuffer)
+	go s.run()
+	return s.channel
 }
 
-func (master *MasterService) Stop() {
+// Stop stops the master service and cleans up resources.
+func (s *Service) Stop() {
 	log.Println("[MASTER] Stop master service")
+	s.ticker.Stop()
 
-	master.ticker.Stop()
-
-	agent := (*master.agentList)[master.SelfID]
+	agent := (*s.agentList)[s.SelfID]
 	agent.Master = false
-	(*master.agentList)[master.SelfID] = agent
+	(*s.agentList)[s.SelfID] = agent
 
-	master.active = false
-	if master.cancel != nil {
-		master.cancel()
+	s.active = false
+	if s.cancel != nil {
+		s.cancel()
 	}
-
-	close(master.channel)
-	master.channel = nil
+	close(s.channel)
+	s.channel = nil
 }
