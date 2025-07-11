@@ -3,11 +3,35 @@ package main
 import (
 	comms "agent/internal/comms"
 	conf "agent/internal/config"
+	masteragent "agent/internal/master"
+	"agent/internal/types"
+	"context"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
+
+const VERSION = "0.1"
+
+func contains[t comparable](s []t, target t) bool {
+	for _, v := range s {
+		if v == target {
+			return true
+		}
+	}
+	return false
+}
+
+// Helper to check for closed connection errors
+func isConnectionClosed(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return msg == "connection is shut down" || msg == "EOF"
+}
 
 func main() {
 	log.Println("[AGENT] Agent starting...")
@@ -21,12 +45,36 @@ func main() {
 		log.Fatalf("[CONFIG] Failed to load config: %v", err)
 	}
 
-	listener, err := comms.StartServer(cfg.TCPAddress, cfg.SelfID)
+	currentMaster := make([]string, 0)
+	isMaster := false
+	registered := false
+
+	var masterChan chan masteragent.Command
+
+	// Initialize AgentList from config
+	agentList := make(types.AgentList, len(cfg.Peers)+1)
+	//	agentList.Add(cfg.SelfID, types.Agent{Address: cfg.TCPAddress, Master: true})
+	//	agentList[cfg.SelfID] = agentList.ClearErr(cfg.SelfID)
+	for _, peer := range cfg.Peers {
+		//if !peer.Master {
+		//	peer.Master = false
+		//}
+		currentMaster = append(currentMaster, peer.Name)
+		agentList.Add(peer.Name, types.Agent{Address: peer.Addr, Master: peer.Master})
+		agentList[peer.Name] = agentList.ClearErr(peer.Name)
+		//	if peer.Master && peer.Name == cfg.SelfID {
+		//
+		//		}
+	}
+
+	// Start the TCP server for this agent
+	listener, err := comms.StartServer(cfg.TCPAddress, cfg.SelfID, &agentList)
 	if err != nil {
 		log.Fatalf("[SERVER] Failed to start server: %v", err)
 	}
 	defer listener.Close()
 
+	// Graceful shutdown on interrupt
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -36,8 +84,72 @@ func main() {
 		os.Exit(0)
 	}()
 
+	master := masteragent.NewMasterService(cfg.SelfID, &agentList, cfg.StatusLogInterval)
+
 	// main loop
 	for {
+		if !isMaster {
+			if len(currentMaster) == 0 {
+				// TODO: Discover a master
+				log.Println("[MASTER] Master is not defined, attempting to discover...")
+				// TODO: Send discovery request to master
+				// TODO: Wait for response
+				// TODO: If response is valid, set currentMaster to response
+				// TODO: If response is not valid, set currentMaster to "" and continue to next iteration
+				// TODO: If no response is received after a timeout, set currentMaster to "" and continue to next iteration
+				// TODO: If no response is received after a timeout, set currentMaster to "" and continue to next iteration
+			} else {
+				//			if len(currentMaster) > 0 {
+				if contains(currentMaster, cfg.SelfID) {
+					log.Println("[MASTER] I am the master!")
+					// if master gorutine is not running, start it
+					if !master.Running() {
+						masterChan = master.Start(context.Background())
+					}
+					isMaster = true
+				} else {
+					// if master gorutine is running, stop it
+					if master.Running() {
+						master.Stop()
+						if masterChan != nil {
+							close(masterChan)
+							masterChan = nil
+						}
+					}
+					isMaster = false
+				}
 
+				if !isMaster {
+					if !registered {
+						for _, masterName := range currentMaster {
+							agent, ok := agentList[masterName]
+							if ok && agent.Master {
+								client, err := comms.NewAgentClient(agent.Address)
+								if err != nil {
+									log.Printf("Failed to connect to master %s: %v", masterName, err)
+									continue
+								}
+								defer client.Close()
+
+								response, err := comms.RegisterClient(client, cfg.SelfID, cfg.TCPAddress)
+								if err != nil {
+									log.Printf("Failed to register with master %s: %v", masterName, err)
+								} else {
+									if response == "already registered" || response == "updated inactive agent" || response == "registered new agent" || response == "re-registered agent" {
+										log.Printf("Successfully registered with master %s", masterName)
+										registered = true
+									} else {
+										log.Printf("Register with master %s returned: %s", masterName, response)
+									}
+								}
+								break // Register with the first master found
+							}
+							time.Sleep(1 * time.Second) // Wait before next trying
+						}
+						time.Sleep(5 * time.Second) // Wait before retrying
+					}
+				}
+			}
+		}
 	}
 }
