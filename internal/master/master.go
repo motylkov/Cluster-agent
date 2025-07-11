@@ -1,19 +1,21 @@
 package master
 
 import (
-	"agent/internal/comms"
-	"agent/internal/types"
+	"cloud-agent/internal/comms"
+	"cloud-agent/internal/types"
 	"context"
 	"log"
 	"sync"
 	"time"
 )
 
+// Command represents a command to be sent to agents.
 type Command struct {
 	CommandName string
 	Args        []string
 }
 
+// MasterService manages agent coordination and command distribution.
 type MasterService struct {
 	status_log_interval int
 	SelfID              string
@@ -25,6 +27,7 @@ type MasterService struct {
 	channel             chan Command
 }
 
+// NewMasterService creates a new MasterService instance.
 func NewMasterService(id string, alist *types.AgentList, statusLogInterval int) *MasterService {
 	return &MasterService{
 		status_log_interval: statusLogInterval,
@@ -34,15 +37,17 @@ func NewMasterService(id string, alist *types.AgentList, statusLogInterval int) 
 	}
 }
 
+// Running reports whether the master service is currently active.
 func (master *MasterService) Running() bool {
 	return master.active
 }
 
+// run is the main loop for the master service.
 func (master *MasterService) run() {
 	log.Println("[MASTER] Start master service")
 
 	wg := &sync.WaitGroup{}
-	master.ticker = time.NewTicker(time.Duration(master.status_log_interval) * time.Second) // Тикер, который срабатывает каждую status_log_interval
+	master.ticker = time.NewTicker(time.Duration(master.status_log_interval) * time.Second)
 
 	agent := (*master.agentList)[master.SelfID]
 	agent.Master = false
@@ -66,6 +71,7 @@ func (master *MasterService) run() {
 	}
 }
 
+// exec executes a command on a specific agent or all agents.
 func (master *MasterService) exec(agentname string, command Command) {
 	if agentname != "" {
 		agent := (*master.agentList)[agentname]
@@ -121,30 +127,26 @@ func (master *MasterService) exec(agentname string, command Command) {
 	}
 }
 
+// Start starts the master service and returns a command channel.
 func (master *MasterService) Start(ctx context.Context) chan Command {
 	master.ctx, master.cancel = context.WithCancel(ctx)
 	master.active = true
 	master.channel = make(chan Command, 10)
-
 	go master.run()
-
 	return master.channel
 }
 
+// Stop stops the master service and cleans up resources.
 func (master *MasterService) Stop() {
 	log.Println("[MASTER] Stop master service")
-
 	master.ticker.Stop()
-
 	agent := (*master.agentList)[master.SelfID]
 	agent.Master = false
 	(*master.agentList)[master.SelfID] = agent
-
 	master.active = false
 	if master.cancel != nil {
 		master.cancel()
 	}
-
 	close(master.channel)
 	master.channel = nil
 }

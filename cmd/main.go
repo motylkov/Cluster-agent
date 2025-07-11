@@ -1,10 +1,10 @@
 package main
 
 import (
-	comms "agent/internal/comms"
-	conf "agent/internal/config"
-	masteragent "agent/internal/master"
-	"agent/internal/types"
+	comms "cloud-agent/internal/comms"
+	conf "cloud-agent/internal/config"
+	masteragent "cloud-agent/internal/master"
+	"cloud-agent/internal/types"
 	"context"
 	"log"
 	"os"
@@ -15,6 +15,7 @@ import (
 
 const VERSION = "0.1"
 
+// contains reports whether target is present in the slice s.
 func contains[t comparable](s []t, target t) bool {
 	for _, v := range s {
 		if v == target {
@@ -24,7 +25,7 @@ func contains[t comparable](s []t, target t) bool {
 	return false
 }
 
-// Helper to check for closed connection errors
+// isConnectionClosed returns true if the error indicates a closed network connection.
 func isConnectionClosed(err error) bool {
 	if err == nil {
 		return false
@@ -33,8 +34,9 @@ func isConnectionClosed(err error) bool {
 	return msg == "connection is shut down" || msg == "EOF"
 }
 
+// main is the entry point for the agent process. It loads configuration, starts the server, and manages master/agent roles.
 func main() {
-	log.Println("[AGENT] Agent starting...")
+	log.Println("[CLOUD-AGENT] Agent starting...")
 
 	configPath := "../config/config.yaml"
 	if len(os.Args) > 1 {

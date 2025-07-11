@@ -1,7 +1,7 @@
 package comms
 
 import (
-	"agent/internal/types"
+	"cloud-agent/internal/types"
 	"errors"
 	"log"
 	"net"
@@ -9,35 +9,37 @@ import (
 	"net/rpc/jsonrpc"
 )
 
-// AgentService provides RPC methods for agent commands
+// AgentService provides RPC methods for agent commands.
 type AgentService struct {
 	SelfID    string
 	agentList *types.AgentList
 }
 
-// PingArgs represents the arguments for the Ping method
-// PingReply represents the reply for the Ping method
+// Args represents arguments for RPC methods.
 type Args struct {
 	ID      string
 	Message string
 }
 
+// Reply represents a standard reply for RPC methods.
 type Reply struct {
 	Response string
 }
 
+// ResponseReply represents an acknowledgement reply.
 type ResponseReply struct {
 	Ack bool
 }
 
-// Ping is an exported method for AgentService to satisfy net/rpc requirements
+// Ping is an exported method for AgentService to satisfy net/rpc requirements.
+// It responds to ping requests from other agents.
 func (a *AgentService) Ping(args Args, reply *Reply) error {
 	reply.Response = "Pong from " + a.SelfID + ": " + args.Message
 	log.Printf("[%s] Pong: %s", a.SelfID, args.Message)
 	return nil
 }
 
-// Register adds a new agent to the agentList with checks
+// Register adds a new agent to the agentList with checks.
 func (a *AgentService) Register(args Args, reply *Reply) error {
 	name := args.ID
 	address := args.Message
@@ -85,15 +87,13 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 	return nil
 }
 
-//----------------
-
-// Add an authorization stub
+// authorize is a stub for agent registration authorization.
 func (a *AgentService) authorize(name, address string) bool {
 	// TODO: implement real authorization logic
 	return true
 }
 
-// Add a uniq method to check for existing agent and connection status
+// uniq checks for an existing agent and connection status.
 func (a *AgentService) uniq(name, address string) (exists bool, active bool, reason string) {
 	agent, ok := (*a.agentList)[name]
 	if !ok {
@@ -123,8 +123,6 @@ func (a *AgentService) uniq(name, address string) (exists bool, active bool, rea
 	}
 	return true, false, "name already used at another address but connection is not active"
 }
-
-//----------------
 
 // StartServer starts the RPC server and returns the listener for graceful shutdown.
 func StartServer(address, selfID string, aList *types.AgentList) (net.Listener, error) {

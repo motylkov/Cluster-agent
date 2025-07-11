@@ -8,7 +8,7 @@ import (
 	"net/rpc/jsonrpc"
 )
 
-// NewAgentClient creates a new JSON-RPC client connection to the given address (IP:Port)
+// NewAgentClient creates a new JSON-RPC client connection to the given address (IP:Port).
 func NewAgentClient(address string) (*rpc.Client, error) {
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
@@ -18,6 +18,7 @@ func NewAgentClient(address string) (*rpc.Client, error) {
 	return client, nil
 }
 
+// Send sends a synchronous ping command to the RPC client and returns the reply.
 func Send(c *rpc.Client, command string) (reply Reply, err error) {
 	if c == nil {
 		return reply, fmt.Errorf("client is nil")
@@ -28,6 +29,7 @@ func Send(c *rpc.Client, command string) (reply Reply, err error) {
 	return reply, err
 }
 
+// SendAsync sends an asynchronous ping command to the RPC client and invokes the callback with the reply and error.
 func SendAsync(c *rpc.Client, command string, handle func(*Reply, error)) {
 	if c == nil {
 		handle(nil, fmt.Errorf("client is nil"))
