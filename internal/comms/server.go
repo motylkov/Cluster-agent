@@ -1,8 +1,10 @@
+// Package comms provides client and server communication utilities for cloud-agent.
 package comms
 
 import (
-	"cloud-agent/internal/types"
+	"cloud-agent/internal/agenttypes"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/rpc"
@@ -12,7 +14,7 @@ import (
 // AgentService provides RPC methods for agent commands.
 type AgentService struct {
 	SelfID    string
-	agentList *types.AgentList
+	agentList *agenttypes.AgentList
 }
 
 // Args represents arguments for RPC methods.
@@ -52,34 +54,35 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 			log.Printf("[SERVER] Registration refused for %s: %s", name, reason)
 			reply.Response = reason
 			return nil
-		} else {
-			log.Printf("[SERVER] Registration updating for %s: %s", name, reason)
-			oldAgent := (*a.agentList)[name]
-			if oldAgent.Client != nil {
-				oldAgent.Client.Close()
-			}
-			client, err := NewAgentClient(address)
-			if err != nil {
-				reply.Response = "failed to create new client connection"
-				return nil
-			}
-			// Create agent with active state and clear error counter
-			agent := types.Agent{Address: address, Master: false, Client: client}
-			agent.ClearErr() // This sets active=true and errorCounter=0
-			(*a.agentList)[name] = agent
-			reply.Response = "re-registered agent"
-			log.Printf("[SERVER] re-registered %s with active=%v, errorCount=%d", name, agent.Active(), agent.ErrorCount())
-			return nil
 		}
+		log.Printf("[SERVER] Registration updating for %s: %s", name, reason)
+		oldAgent := (*a.agentList)[name]
+		if oldAgent.Client != nil {
+			if err := oldAgent.Client.Close(); err != nil {
+				log.Printf("[SERVER] Error closing old client: %v", err)
+			}
+		}
+		client, err := NewAgentClient(address)
+		if err != nil {
+			reply.Response = "failed to create new client connection"
+			return fmt.Errorf("failed to create new client connection: %w", err)
+		}
+		// Create agent with active state and clear error counter
+		agent := agenttypes.Agent{Address: address, Master: false, Client: client}
+		agent.ClearErr() // This sets active=true and errorCounter=0
+		(*a.agentList)[name] = agent
+		reply.Response = "re-registered agent"
+		log.Printf("[SERVER] re-registered %s with active=%v, errorCount=%d", name, agent.Active(), agent.ErrorCount())
+		return nil
 	}
 	// Add new agent
 	client, err := NewAgentClient(address)
 	if err != nil {
 		reply.Response = "failed to create new client connection"
-		return nil
+		return fmt.Errorf("failed to create new client connection: %w", err)
 	}
 	// Create agent with active state and clear error counter
-	agent := types.Agent{Address: address, Master: false, Client: client}
+	agent := agenttypes.Agent{Address: address, Master: false, Client: client}
 	agent.ClearErr() // This sets active=true and errorCounter=0
 	(*a.agentList)[name] = agent
 	reply.Response = "registered new agent"
@@ -88,7 +91,7 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 }
 
 // authorize is a stub for agent registration authorization.
-func (a *AgentService) authorize(name, address string) bool {
+func (a *AgentService) authorize(_ string, _ string) bool {
 	// TODO: implement real authorization logic
 	return true
 }
@@ -125,16 +128,18 @@ func (a *AgentService) uniq(name, address string) (exists bool, active bool, rea
 }
 
 // StartServer starts the RPC server and returns the listener for graceful shutdown.
-func StartServer(address, selfID string, aList *types.AgentList) (net.Listener, error) {
+func StartServer(address, selfID string, aList *agenttypes.AgentList) (net.Listener, error) {
 	agent := &AgentService{
 		SelfID:    selfID,
 		agentList: aList,
 	}
-	rpc.Register(agent)
+	if err := rpc.Register(agent); err != nil {
+		return nil, fmt.Errorf("failed to register RPC service: %w", err)
+	}
 
 	ln, err := net.Listen("tcp", address)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to listen on %s: %w", address, err)
 	}
 
 	go func() {
@@ -144,7 +149,6 @@ func StartServer(address, selfID string, aList *types.AgentList) (net.Listener, 
 			if err != nil {
 				if err.Error() == "use of closed network connection" {
 					// Listener closed, exit loop
-					// return
 					break
 				}
 				log.Println("Accept error:", err)

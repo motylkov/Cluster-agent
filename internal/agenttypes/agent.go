@@ -1,6 +1,9 @@
-package types
+// Package agenttypes provides shared types for cloud-agent.
+package agenttypes
 
 import "net/rpc"
+
+const maxErrorCount = 5
 
 // Agent represents a node in the cluster with its connection and status.
 type Agent struct {
@@ -14,7 +17,7 @@ type Agent struct {
 // SetErr increments the error counter and marks the agent as inactive if the threshold is reached.
 func (a *Agent) SetErr() {
 	a.errorCounter++
-	if a.errorCounter >= 5 {
+	if a.errorCounter >= maxErrorCount {
 		a.active = false
 	}
 }
@@ -46,17 +49,14 @@ func (a AgentList) Add(id string, agent Agent) {
 }
 
 // Del removes an agent from the list (not implemented).
-func (a AgentList) Del(id string) {
-	//todo: delete id from AgentList map
+func (a AgentList) Del(_ string) {
+	// todo: delete id from AgentList map
 }
 
 // IsErr reports whether an agent has exceeded the specified error threshold.
 func (a AgentList) IsErr(id string, num int) bool {
 	agent := a[id]
-	if agent.errorCounter >= num {
-		return true
-	}
-	return false
+	return agent.errorCounter >= num
 }
 
 // SetErr increments the error counter for a specific agent.
