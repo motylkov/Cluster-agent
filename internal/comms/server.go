@@ -3,6 +3,7 @@ package comms
 
 import (
 	"cloud-agent/internal/agents"
+	"cloud-agent/internal/config"
 	"errors"
 	"fmt"
 	"log"
@@ -15,6 +16,7 @@ import (
 type AgentService struct {
 	SelfID    string
 	agentList *agents.AgentList
+	config    *config.Config
 }
 
 // Args represents arguments for RPC methods.
@@ -73,6 +75,14 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 		(*a.agentList)[name] = agent
 		reply.Response = "re-registered agent"
 		log.Printf("[SERVER] re-registered %s with active=%v, errorCount=%d", name, agent.Active(), agent.ErrorCount())
+		if name != a.SelfID {
+			peerInfo := config.PeerInfo{Name: name, Addr: address, Master: agent.Master}
+			if err := a.config.UpdatePeer(peerInfo); err != nil {
+				log.Printf("[SERVER] Failed to update peer in config: %v", err)
+			} else if err := a.config.SaveConfig("config/config.yaml"); err != nil {
+				log.Printf("[SERVER] Failed to save config: %v", err)
+			}
+		}
 		return nil
 	}
 	// Add new agent
@@ -87,6 +97,14 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 	(*a.agentList)[name] = agent
 	reply.Response = "registered new agent"
 	log.Printf("[SERVER] registered %s with active=%v, errorCount=%d", name, agent.Active(), agent.ErrorCount())
+	if name != a.SelfID {
+		peerInfo := config.PeerInfo{Name: name, Addr: address, Master: agent.Master}
+		if err := a.config.UpdatePeer(peerInfo); err != nil {
+			log.Printf("[SERVER] Failed to update peer in config: %v", err)
+		} else if err := a.config.SaveConfig("config/config.yaml"); err != nil {
+			log.Printf("[SERVER] Failed to save config: %v", err)
+		}
+	}
 	return nil
 }
 
@@ -128,10 +146,11 @@ func (a *AgentService) uniq(name, address string) (exists bool, active bool, rea
 }
 
 // StartServer starts the RPC server and returns the listener for graceful shutdown.
-func StartServer(address, selfID string, aList *agents.AgentList) (net.Listener, error) {
+func StartServer(address, selfID string, aList *agents.AgentList, cfg *config.Config) (net.Listener, error) {
 	agent := &AgentService{
 		SelfID:    selfID,
 		agentList: aList,
+		config:    cfg,
 	}
 	if err := rpc.Register(agent); err != nil {
 		return nil, fmt.Errorf("failed to register RPC service: %w", err)

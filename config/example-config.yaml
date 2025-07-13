@@ -1,6 +1,13 @@
-tcp_address: "127.0.0.1:9001"
-self_id: "agent1"
+tcp_address: 127.0.0.1:9001
+self_id: agent1
+num_masters: 1
+election_delay: 5
+status_log_interval: 5
+master_timeout: 60
 peers:
-  - name: "agent1"
-    addr: "127.0.0.1:9001"
-    master: true
+    - name: agent1
+      addr: 127.0.0.1:9001
+      master: true
+    - name: agent2
+      addr: 127.0.0.1:9002
+      master: false

@@ -57,7 +57,7 @@ func main() {
 	currentMaster := agentList.Masters()
 
 	// Start the TCP server for this agent
-	listener, err := comms.StartServer(cfg.TCPAddress, cfg.SelfID, &agentList)
+	listener, err := comms.StartServer(cfg.TCPAddress, cfg.SelfID, &agentList, cfg)
 	if err != nil {
 		log.Fatalf("[SERVER] Failed to start server: %v", err)
 	}
