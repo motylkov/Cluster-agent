@@ -55,9 +55,9 @@ func (s *Service) run() {
 	wg := &sync.WaitGroup{}
 	s.ticker = time.NewTicker(time.Duration(s.statusLogInterval) * time.Second)
 
-	agent := (*s.agentList)[s.SelfID]
+	agent := s.agentList.Peer[s.SelfID]
 	agent.Master = false
-	(*s.agentList)[s.SelfID] = agent
+	s.agentList.Peer[s.SelfID] = agent
 
 	defer s.Stop()
 
@@ -80,7 +80,7 @@ func (s *Service) run() {
 // exec executes a command on a specific agent or all agents.
 func (s *Service) exec(agentname string, command Command) {
 	if agentname != "" {
-		agent := (*s.agentList)[agentname]
+		agent := s.agentList.Peer[agentname]
 		if agent.Client == nil {
 			client, err := comms.NewAgentClient(agent.Address)
 			if err != nil {
@@ -88,15 +88,15 @@ func (s *Service) exec(agentname string, command Command) {
 				return
 			}
 			agent.Client = client
-			(*s.agentList)[agentname] = agent
+			s.agentList.Peer[agentname] = agent
 		}
 
 		log.Println("[MASTER] Send command for "+agentname+": ", command)
 		comms.SendAsync(agent.Client, command.CommandName, pingReply)
 	} else {
 		log.Println("[MASTER] Command for all: ", command)
-		for id := range *s.agentList {
-			agent := (*s.agentList)[id]
+		for id := range s.agentList.Peer {
+			agent := s.agentList.Peer[id]
 			log.Printf("[MASTER] Checking agent %s: active=%v, address=%s, client=%v", id, agent.Active(), agent.Address, agent.Client != nil)
 			if !s.agentList.Active(id) {
 				log.Printf("[MASTER] Skipping inactive agent %s", id)
@@ -108,11 +108,11 @@ func (s *Service) exec(agentname string, command Command) {
 				if err != nil {
 					log.Printf("[MASTER] Failed to connect with agent %s: %v", id, err)
 					agent.SetErr()
-					(*s.agentList)[id] = agent
+					s.agentList.Peer[id] = agent
 					continue
 				}
 				agent.Client = client
-				(*s.agentList)[id] = agent
+				s.agentList.Peer[id] = agent
 			}
 
 			agentPtr := &agent
@@ -127,7 +127,7 @@ func (s *Service) exec(agentname string, command Command) {
 					agentPtr.ClearErr()
 					log.Printf("[MASTER] Reply from %s: %s", id, reply.Response)
 				}
-				(*s.agentList)[id] = *agentPtr
+				s.agentList.Peer[id] = *agentPtr
 			})
 		}
 	}
@@ -147,9 +147,9 @@ func (s *Service) Stop() {
 	log.Println("[MASTER] Stop master service")
 	s.ticker.Stop()
 
-	agent := (*s.agentList)[s.SelfID]
+	agent := s.agentList.Peer[s.SelfID]
 	agent.Master = false
-	(*s.agentList)[s.SelfID] = agent
+	s.agentList.Peer[s.SelfID] = agent
 
 	s.active = false
 	if s.cancel != nil {

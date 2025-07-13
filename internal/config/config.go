@@ -24,6 +24,7 @@ type Config struct {
 	TCPAddress        string     `yaml:"tcp_address"`
 	SelfID            string     `yaml:"self_id"`
 	Peers             []PeerInfo `yaml:"peers"`
+	PeersDBPath       string     `yaml:"peers_db_path"`
 	NumMasters        int        `yaml:"num_masters"`
 	ElectionDelay     int        `yaml:"election_delay"`
 	StatusLogInterval int        `yaml:"status_log_interval"`
@@ -69,8 +70,8 @@ func (c *Config) UpdatePeer(peer PeerInfo) error {
 	return nil
 }
 
-// SaveConfig writes the config to the given file path in YAML format.
-func (c *Config) SaveConfig(path string) error {
+// SaveConfig writes the config to the stored file path in YAML format.
+func (c *Config) SaveConfig() error {
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)

@@ -50,14 +50,15 @@ func main() {
 
 	var masterChan chan masteragent.Command
 
-	// Initialize AgentList from config
-	agentList := agents.NewAgentList(cfg.SelfID, cfg.TCPAddress, cfg.Peers)
+	// old agentList := agents.NewAgentList(cfg.SelfID, cfg.TCPAddress, cfg.Peers)
 
-	// Fill currentMaster slice from agentList
+	// Initialize AgentList from config (masters only)
+	agentList := agents.NewAgentList(cfg)
+
 	currentMaster := agentList.Masters()
 
 	// Start the TCP server for this agent
-	listener, err := comms.StartServer(cfg.TCPAddress, cfg.SelfID, &agentList, cfg)
+	listener, err := comms.StartServer(cfg, agentList)
 	if err != nil {
 		log.Fatalf("[SERVER] Failed to start server: %v", err)
 	}
@@ -79,7 +80,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	master := masteragent.NewService(cfg.SelfID, &agentList, cfg.StatusLogInterval)
+	master := masteragent.NewService(cfg.SelfID, agentList, cfg.StatusLogInterval)
 
 	// main loop
 	for {
@@ -116,7 +117,7 @@ func main() {
 				if !isMaster {
 					if !registered {
 						for _, masterName := range currentMaster {
-							agent, ok := agentList[masterName]
+							agent, ok := agentList.Peer[masterName]
 							if ok && agent.Master {
 								client, err := comms.NewAgentClient(agent.Address)
 								if err != nil {

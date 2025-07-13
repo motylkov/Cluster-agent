@@ -4,10 +4,8 @@ num_masters: 1
 election_delay: 5
 status_log_interval: 5
 master_timeout: 60
+peers_db_path: peers.db
 peers:
     - name: agent1
       addr: 127.0.0.1:9001
       master: true
-    - name: agent2
-      addr: 127.0.0.1:9002
-      master: false

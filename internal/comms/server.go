@@ -58,7 +58,7 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 			return nil
 		}
 		log.Printf("[SERVER] Registration updating for %s: %s", name, reason)
-		oldAgent := (*a.agentList)[name]
+		oldAgent := a.agentList.Peer[name]
 		if oldAgent.Client != nil {
 			if err := oldAgent.Client.Close(); err != nil {
 				log.Printf("[SERVER] Error closing old client: %v", err)
@@ -72,16 +72,19 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 		// Create agent with active state and clear error counter
 		agent := agents.Agent{Address: address, Master: false, Client: client}
 		agent.ClearErr() // This sets active=true and errorCounter=0
-		(*a.agentList)[name] = agent
+		a.agentList.Peer[name] = agent
 		reply.Response = "re-registered agent"
 		log.Printf("[SERVER] re-registered %s with active=%v, errorCount=%d", name, agent.Active(), agent.ErrorCount())
 		if name != a.SelfID {
-			peerInfo := config.PeerInfo{Name: name, Addr: address, Master: agent.Master}
-			if err := a.config.UpdatePeer(peerInfo); err != nil {
-				log.Printf("[SERVER] Failed to update peer in config: %v", err)
-			} else if err := a.config.SaveConfig("config/config.yaml"); err != nil {
-				log.Printf("[SERVER] Failed to save config: %v", err)
+			if agent.Master {
+				peerInfo := config.PeerInfo{Name: name, Addr: address, Master: agent.Master}
+				if err := a.config.UpdatePeer(peerInfo); err != nil {
+					log.Printf("[SERVER] Failed to update peer in config: %v", err)
+				} else if err := a.config.SaveConfig(); err != nil {
+					log.Printf("[SERVER] Failed to save config: %v", err)
+				}
 			}
+			a.agentList.Add(name, agent)
 		}
 		return nil
 	}
@@ -94,16 +97,19 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 	// Create agent with active state and clear error counter
 	agent := agents.Agent{Address: address, Master: false, Client: client}
 	agent.ClearErr() // This sets active=true and errorCounter=0
-	(*a.agentList)[name] = agent
+	a.agentList.Peer[name] = agent
 	reply.Response = "registered new agent"
 	log.Printf("[SERVER] registered %s with active=%v, errorCount=%d", name, agent.Active(), agent.ErrorCount())
 	if name != a.SelfID {
-		peerInfo := config.PeerInfo{Name: name, Addr: address, Master: agent.Master}
-		if err := a.config.UpdatePeer(peerInfo); err != nil {
-			log.Printf("[SERVER] Failed to update peer in config: %v", err)
-		} else if err := a.config.SaveConfig("config/config.yaml"); err != nil {
-			log.Printf("[SERVER] Failed to save config: %v", err)
+		if agent.Master {
+			peerInfo := config.PeerInfo{Name: name, Addr: address, Master: agent.Master}
+			if err := a.config.UpdatePeer(peerInfo); err != nil {
+				log.Printf("[SERVER] Failed to update peer in config: %v", err)
+			} else if err := a.config.SaveConfig(); err != nil {
+				log.Printf("[SERVER] Failed to save config: %v", err)
+			}
 		}
+		a.agentList.Add(name, agent)
 	}
 	return nil
 }
@@ -116,7 +122,7 @@ func (a *AgentService) authorize(_ string, _ string) bool {
 
 // uniq checks for an existing agent and connection status.
 func (a *AgentService) uniq(name, address string) (exists bool, active bool, reason string) {
-	agent, ok := (*a.agentList)[name]
+	agent, ok := a.agentList.Peer[name]
 	if !ok {
 		return false, false, ""
 	}
@@ -146,9 +152,9 @@ func (a *AgentService) uniq(name, address string) (exists bool, active bool, rea
 }
 
 // StartServer starts the RPC server and returns the listener for graceful shutdown.
-func StartServer(address, selfID string, aList *agents.AgentList, cfg *config.Config) (net.Listener, error) {
+func StartServer(cfg *config.Config, aList *agents.AgentList) (net.Listener, error) {
 	agent := &AgentService{
-		SelfID:    selfID,
+		SelfID:    cfg.SelfID,
 		agentList: aList,
 		config:    cfg,
 	}
@@ -156,13 +162,13 @@ func StartServer(address, selfID string, aList *agents.AgentList, cfg *config.Co
 		return nil, fmt.Errorf("failed to register RPC service: %w", err)
 	}
 
-	ln, err := net.Listen("tcp", address)
+	ln, err := net.Listen("tcp", cfg.TCPAddress)
 	if err != nil {
-		return nil, fmt.Errorf("failed to listen on %s: %w", address, err)
+		return nil, fmt.Errorf("failed to listen on %s: %w", cfg.TCPAddress, err)
 	}
 
 	go func() {
-		log.Printf("[SERVER] Listening on %s", address)
+		log.Printf("[SERVER] Listening on %s", cfg.TCPAddress)
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
@@ -175,7 +181,7 @@ func StartServer(address, selfID string, aList *agents.AgentList, cfg *config.Co
 			}
 			go rpc.ServeCodec(jsonrpc.NewServerCodec(conn))
 		}
-		log.Printf("[SERVER] on %s is stopped", address)
+		log.Printf("[SERVER] on %s is stopped", cfg.TCPAddress)
 	}()
 	return ln, nil
 }
