@@ -2,7 +2,7 @@
 package main
 
 import (
-	"cloud-agent/internal/agenttypes"
+	"cloud-agent/internal/agents"
 	comms "cloud-agent/internal/comms"
 	conf "cloud-agent/internal/config"
 	masteragent "cloud-agent/internal/master"
@@ -45,26 +45,16 @@ func main() {
 		log.Fatalf("[CONFIG] Failed to load config: %v", err)
 	}
 
-	currentMaster := make([]string, 0)
 	isMaster := false
 	registered := false
 
 	var masterChan chan masteragent.Command
 
 	// Initialize AgentList from config
-	agentList := make(agenttypes.AgentList, len(cfg.Peers)+1)
-	// agentList.Add(cfg.SelfID, types.Agent{Address: cfg.TCPAddress, Master: true})
-	// agentList[cfg.SelfID] = agentList.ClearErr(cfg.SelfID)
-	for _, peer := range cfg.Peers {
-		// if !peer.Master {
-		// 	peer.Master = false
-		// }
-		currentMaster = append(currentMaster, peer.Name)
-		agentList.Add(peer.Name, agenttypes.Agent{Address: peer.Addr, Master: peer.Master})
-		agentList[peer.Name] = agentList.ClearErr(peer.Name)
-		// if peer.Master && peer.Name == cfg.SelfID {
-		// }
-	}
+	agentList := agents.NewAgentList(cfg.SelfID, cfg.TCPAddress, cfg.Peers)
+
+	// Fill currentMaster slice from agentList
+	currentMaster := agentList.Masters()
 
 	// Start the TCP server for this agent
 	listener, err := comms.StartServer(cfg.TCPAddress, cfg.SelfID, &agentList)

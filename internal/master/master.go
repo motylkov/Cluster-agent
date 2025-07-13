@@ -2,7 +2,7 @@
 package master
 
 import (
-	"cloud-agent/internal/agenttypes"
+	"cloud-agent/internal/agents"
 	"cloud-agent/internal/comms"
 	"context"
 	"log"
@@ -26,7 +26,7 @@ type Service struct {
 	statusLogInterval int
 	SelfID            string
 	active            bool
-	agentList         *agenttypes.AgentList
+	agentList         *agents.AgentList
 	ticker            *time.Ticker
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -34,7 +34,7 @@ type Service struct {
 }
 
 // NewService creates a new Service instance.
-func NewService(id string, alist *agenttypes.AgentList, statusLogInterval int) *Service {
+func NewService(id string, alist *agents.AgentList, statusLogInterval int) *Service {
 	return &Service{
 		statusLogInterval: statusLogInterval,
 		active:            false,
