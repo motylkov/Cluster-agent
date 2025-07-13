@@ -2,7 +2,7 @@
 package comms
 
 import (
-	"cloud-agent/internal/agenttypes"
+	"cloud-agent/internal/agents"
 	"errors"
 	"fmt"
 	"log"
@@ -14,7 +14,7 @@ import (
 // AgentService provides RPC methods for agent commands.
 type AgentService struct {
 	SelfID    string
-	agentList *agenttypes.AgentList
+	agentList *agents.AgentList
 }
 
 // Args represents arguments for RPC methods.
@@ -68,7 +68,7 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 			return fmt.Errorf("failed to create new client connection: %w", err)
 		}
 		// Create agent with active state and clear error counter
-		agent := agenttypes.Agent{Address: address, Master: false, Client: client}
+		agent := agents.Agent{Address: address, Master: false, Client: client}
 		agent.ClearErr() // This sets active=true and errorCounter=0
 		(*a.agentList)[name] = agent
 		reply.Response = "re-registered agent"
@@ -82,7 +82,7 @@ func (a *AgentService) Register(args Args, reply *Reply) error {
 		return fmt.Errorf("failed to create new client connection: %w", err)
 	}
 	// Create agent with active state and clear error counter
-	agent := agenttypes.Agent{Address: address, Master: false, Client: client}
+	agent := agents.Agent{Address: address, Master: false, Client: client}
 	agent.ClearErr() // This sets active=true and errorCounter=0
 	(*a.agentList)[name] = agent
 	reply.Response = "registered new agent"
@@ -128,7 +128,7 @@ func (a *AgentService) uniq(name, address string) (exists bool, active bool, rea
 }
 
 // StartServer starts the RPC server and returns the listener for graceful shutdown.
-func StartServer(address, selfID string, aList *agenttypes.AgentList) (net.Listener, error) {
+func StartServer(address, selfID string, aList *agents.AgentList) (net.Listener, error) {
 	agent := &AgentService{
 		SelfID:    selfID,
 		agentList: aList,
