@@ -38,6 +38,12 @@ type ResponseReply struct {
 // Ping is an exported method for AgentService to satisfy net/rpc requirements.
 // It responds to ping requests from other agents.
 func (a *AgentService) Ping(args Args, reply *Reply) error {
+	// Authorize: only master can send ping
+	agent, ok := a.agentList.Peer[args.ID]
+	if !ok || !agent.Master {
+		return errors.New("unauthorized: only master can send command")
+	}
+
 	reply.Response = "Pong from " + a.SelfID + ": " + args.Message
 	log.Printf("[%s] Pong: %s", a.SelfID, args.Message)
 	return nil
@@ -45,6 +51,11 @@ func (a *AgentService) Ping(args Args, reply *Reply) error {
 
 // Register adds a new agent to the agentList with checks.
 func (a *AgentService) Register(args Args, reply *Reply) error {
+	if !a.agentList.IsMaster(a.SelfID) {
+		log.Printf("[Agent] I'm (%s) not a master: uncorrect register request from %s", a.SelfID, args.ID)
+		reply.Response = "I'm not a master"
+		return nil
+	}
 	name := args.ID
 	address := args.Message
 	if !a.authorize(name, address) {

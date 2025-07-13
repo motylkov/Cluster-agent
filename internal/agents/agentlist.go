@@ -123,3 +123,8 @@ func (a AgentList) Masters() []string {
 	}
 	return masters
 }
+
+// IsMaster reports whether the agent with the given ID is marked as a master.
+func (a AgentList) IsMaster(id string) bool {
+	return a.Peer[id].Master
+}

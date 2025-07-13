@@ -86,15 +86,19 @@ func main() {
 	for {
 		if !isMaster {
 			if len(currentMaster) == 0 {
-				// TODO: Discover a master
-				log.Println("[MASTER] Master is not defined, attempting to discover...")
-				// TODO: Send discovery request to master
-				// TODO: Wait for response
-				// TODO: If response is valid, set currentMaster to response
-				// TODO: If response is not valid, set currentMaster to "" and continue to next iteration
-				// TODO: If no response is received after a timeout, set currentMaster to "" and continue to next iteration
-				// TODO: If no response is received after a timeout, set currentMaster to "" and continue to next iteration
-			} else {
+				currentMaster = agentList.Masters()
+				if len(currentMaster) == 0 {
+					// TODO: Discover a master
+					log.Println("[MASTER] Master is not defined, attempting to discover...")
+					// TODO: Send discovery request to master
+					// TODO: Wait for response
+					// TODO: If response is valid, set currentMaster to response
+					// TODO: If response is not valid, set currentMaster to "" and continue to next iteration
+					// TODO: If no response is received after a timeout, set currentMaster to "" and continue to next iteration
+					// TODO: If no response is received after a timeout, set currentMaster to "" and continue to next iteration
+				}
+			}
+			if len(currentMaster) > 0 {
 				if contains(currentMaster, cfg.SelfID) {
 					log.Println("[MASTER] I am the master!")
 					// if master gorutine is not running, start it
