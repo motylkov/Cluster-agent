@@ -12,7 +12,6 @@ const maxErrorCount = 5
 type AgentList struct {
 	Peer     map[string]Agent
 	DbActive bool
-	dbPath   string
 	db       *PeersDB
 }
 
@@ -31,7 +30,6 @@ func NewAgentList(cfg *config.Config) *AgentList {
 
 	var err error
 	if cfg.PeersDBPath != "" {
-		agentList.dbPath = cfg.PeersDBPath
 		agentList.db, err = InitPeersDB(cfg.PeersDBPath)
 		if err != nil {
 			log.Printf("[AGENTS] Failed to open peers DB: %v", err)
