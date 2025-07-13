@@ -21,3 +21,4 @@ __debug*
 
 # conf
 config*.yaml
+peers*.db

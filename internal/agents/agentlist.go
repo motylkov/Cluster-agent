@@ -3,70 +3,113 @@ package agents
 
 import (
 	"cloud-agent/internal/config"
+	"log"
 )
 
 const maxErrorCount = 5
 
 // AgentList is a map of agent IDs to Agent structs.
-type AgentList map[string]Agent
+type AgentList struct {
+	Peer     map[string]Agent
+	DbActive bool
+	db       *PeersDB
+}
 
-// NewAgentList creates an AgentList from the given self info and peer list.
-func NewAgentList(selfID, selfAddr string, peers []config.PeerInfo) AgentList {
-	agentList := make(AgentList, len(peers)+1)
+// NewAgentList creates an AgentList from the given config.
+func NewAgentList(cfg *config.Config) *AgentList {
+	var agentList AgentList
+	agentList.Peer = make(map[string]Agent) // Ensure map is initialized
 
 	// add self agent
-	agentList.Add(selfID, Agent{Address: selfAddr})
+	agentList.Add(cfg.SelfID, Agent{Address: cfg.TCPAddress})
 
-	for _, peer := range peers {
+	for _, peer := range cfg.Peers {
 		agentList.Add(peer.Name, Agent{Address: peer.Addr, Master: peer.Master})
-		agentList[peer.Name] = agentList.ClearErr(peer.Name)
+		agentList.Peer[peer.Name] = agentList.ClearErr(peer.Name)
 	}
 
-	return agentList
+	var err error
+	if cfg.PeersDBPath != "" {
+		agentList.db, err = InitPeersDB(cfg.PeersDBPath)
+		if err != nil {
+			log.Printf("[AGENTS] Failed to open peers DB: %v", err)
+		} else {
+			agentList.DbActive = true
+		}
+	}
+
+	if agentList.DbActive {
+		// read peers from DB to agentList.Peer
+		peers, err := agentList.db.LoadPeersFromDB()
+		if err != nil {
+			log.Printf("[AGENTS] Failed to read peers DB: %v", err)
+		} else {
+			for _, peer := range peers {
+				agentList.Add(peer.Name, Agent{Address: peer.Addr, Master: peer.Master})
+				agentList.Peer[peer.Name] = agentList.ClearErr(peer.Name)
+			}
+		}
+	}
+
+	return &agentList
 }
 
 // Add adds a new agent to the list with active status.
 func (a AgentList) Add(id string, agent Agent) {
 	agent.errorCounter = 0
 	agent.active = true
-	a[id] = agent
+	a.Peer[id] = agent
+
+	if a.DbActive {
+		err := a.db.UpsertPeer(
+			config.PeerInfo{
+				Name:   id,
+				Addr:   agent.Address,
+				Master: agent.Master,
+			},
+		)
+		if err != nil {
+			log.Printf("[AGENTS] Failed to upsert peer in DB: %v", err)
+		}
+	}
 }
 
 // Del removes an agent from the list (not implemented).
 func (a AgentList) Del(_ string) {
 	// todo: delete id from AgentList map
+	// todo: delete id from DB
 }
 
 // IsErr reports whether an agent has exceeded the specified error threshold.
 func (a AgentList) IsErr(id string, num int) bool {
-	agent := a[id]
+	agent := a.Peer[id]
 	return agent.errorCounter >= num
 }
 
 // SetErr increments the error counter for a specific agent.
 func (a AgentList) SetErr(id string) {
-	agent := a[id]
+	agent := a.Peer[id]
 	agent.SetErr()
-	a[id] = agent
+	a.Peer[id] = agent
 }
 
 // ClearErr resets the error counter for a specific agent and returns the updated agent.
 func (a AgentList) ClearErr(id string) Agent {
-	agent := a[id]
+	agent := a.Peer[id]
 	agent.ClearErr()
 	return agent
 }
 
 // Active reports whether a specific agent is currently active.
 func (a AgentList) Active(id string) bool {
-	agent := a[id]
+	agent := a.Peer[id]
 	return agent.Active()
 }
 
 // Masters returns a slice of agent names that are marked as master.
 func (a AgentList) Masters() []string {
 	masters := make([]string, 0)
-	for name, agent := range a {
+	for name, agent := range a.Peer {
 		if agent.Master {
 			masters = append(masters, name)
 		}
