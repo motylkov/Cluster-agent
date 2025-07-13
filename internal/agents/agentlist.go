@@ -74,10 +74,17 @@ func (a AgentList) Add(id string, agent Agent) {
 	}
 }
 
-// Del removes an agent from the list (not implemented).
-func (a AgentList) Del(_ string) {
-	// todo: delete id from AgentList map
-	// todo: delete id from DB
+// Del removes an agent from the list and from the DB if active.
+func (a AgentList) Del(id string) {
+	delete(a.Peer, id)
+
+	// Delete from DB
+	if a.DbActive {
+		err := a.db.RemovePeer(id)
+		if err != nil {
+			log.Printf("[AGENTS] Failed to remove peer from DB: %v", err)
+		}
+	}
 }
 
 // IsErr reports whether an agent has exceeded the specified error threshold.

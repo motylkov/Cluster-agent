@@ -48,8 +48,8 @@ func (d *PeersDB) UpsertPeer(peer config.PeerInfo) error {
 }
 
 // RemovePeer deletes a peer from the database by name.
-func (d *PeersDB) RemovePeer(db *sql.DB, name string) error {
-	_, err := db.ExecContext(context.Background(), `DELETE FROM peers WHERE name = ?`, name)
+func (d *PeersDB) RemovePeer(name string) error {
+	_, err := d.db.ExecContext(context.Background(), `DELETE FROM peers WHERE name = ?`, name)
 	if err != nil {
 		return fmt.Errorf("failed to remove peer: %w", err)
 	}
