@@ -40,6 +40,9 @@ type ResponseReply struct {
 func (a *AgentService) Ping(args Args, reply *Reply) error {
 	// Authorize: only master can send ping
 	agent, ok := a.agentList.Peer[args.ID]
+	log.Printf("[DEBUG ping] agent %s args: %v", args.ID, args)
+	log.Printf("[DEBUG ping] agent %s ok: %v", args.ID, ok)
+	log.Printf("[DEBUG ping] agent %s master: %v", args.ID, agent.Master)
 	if !ok || !agent.Master {
 		return errors.New("unauthorized: only master can send command")
 	}

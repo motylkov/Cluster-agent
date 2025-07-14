@@ -4,6 +4,7 @@ package agents
 import (
 	"cloud-agent/internal/config"
 	"log"
+	"sync"
 )
 
 const maxErrorCount = 5
@@ -13,6 +14,7 @@ type AgentList struct {
 	Peer     map[string]Agent
 	DbActive bool
 	db       *PeersDB
+	mu       sync.RWMutex
 }
 
 // NewAgentList creates an AgentList from the given config.
@@ -25,6 +27,7 @@ func NewAgentList(cfg *config.Config) *AgentList {
 
 	for _, peer := range cfg.Peers {
 		agentList.Add(peer.Name, Agent{Address: peer.Addr, Master: peer.Master})
+		log.Printf("[DEBUG] agent list: %s %s %v", peer.Name, peer.Addr, peer.Master)
 		agentList.Peer[peer.Name] = agentList.ClearErr(peer.Name)
 	}
 
@@ -55,7 +58,9 @@ func NewAgentList(cfg *config.Config) *AgentList {
 }
 
 // Add adds a new agent to the list with active status.
-func (a AgentList) Add(id string, agent Agent) {
+func (a *AgentList) Add(id string, agent Agent) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	agent.errorCounter = 0
 	agent.active = true
 	a.Peer[id] = agent
@@ -75,7 +80,9 @@ func (a AgentList) Add(id string, agent Agent) {
 }
 
 // Del removes an agent from the list and from the DB if active.
-func (a AgentList) Del(id string) {
+func (a *AgentList) Del(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	delete(a.Peer, id)
 
 	// Delete from DB
@@ -88,43 +95,58 @@ func (a AgentList) Del(id string) {
 }
 
 // IsErr reports whether an agent has exceeded the specified error threshold.
-func (a AgentList) IsErr(id string, num int) bool {
+func (a *AgentList) IsErr(id string, num int) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	agent := a.Peer[id]
 	return agent.errorCounter >= num
 }
 
 // SetErr increments the error counter for a specific agent.
-func (a AgentList) SetErr(id string) {
+func (a *AgentList) SetErr(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	agent := a.Peer[id]
 	agent.SetErr()
 	a.Peer[id] = agent
 }
 
 // ClearErr resets the error counter for a specific agent and returns the updated agent.
-func (a AgentList) ClearErr(id string) Agent {
+func (a *AgentList) ClearErr(id string) Agent {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	agent := a.Peer[id]
 	agent.ClearErr()
 	return agent
 }
 
 // Active reports whether a specific agent is currently active.
-func (a AgentList) Active(id string) bool {
+func (a *AgentList) Active(id string) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	agent := a.Peer[id]
 	return agent.Active()
 }
 
 // Masters returns a slice of agent names that are marked as master.
-func (a AgentList) Masters() []string {
+func (a *AgentList) Masters() []string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	masters := make([]string, 0)
 	for name, agent := range a.Peer {
+		log.Printf("[DEBUG] agent %s: %v", name, agent.Master)
 		if agent.Master {
 			masters = append(masters, name)
+			log.Printf("[DEBUG] agent %s was added", name)
 		}
 	}
 	return masters
 }
 
 // IsMaster reports whether the agent with the given ID is marked as a master.
-func (a AgentList) IsMaster(id string) bool {
+func (a *AgentList) IsMaster(id string) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	log.Printf("[DEBUG] agent %s: %v", id, a.Peer[id].Master)
 	return a.Peer[id].Master
 }
