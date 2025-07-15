@@ -5,7 +5,7 @@
 /bin/
 /lib/
 main
-agent
+agent*
 __debug*
 /.vscode
 
