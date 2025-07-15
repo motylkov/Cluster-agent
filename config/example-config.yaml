@@ -5,6 +5,7 @@ election_delay: 5
 status_log_interval: 5
 master_timeout: 60
 peers_db_path: peers.db
+cluster_token: "supersecret123"
 peers:
     - name: agent1
       addr: 127.0.0.1:9001

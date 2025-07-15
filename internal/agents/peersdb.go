@@ -2,7 +2,6 @@
 package agents
 
 import (
-	"cloud-agent/internal/config"
 	"context"
 	"database/sql"
 	"fmt"
@@ -15,6 +14,14 @@ type PeersDB struct {
 	db *sql.DB
 }
 
+type PeerInfoDB struct {
+	Name      string
+	Addr      string
+	Master    bool
+	Token     string
+	KeyPublic string
+}
+
 // InitPeersDB opens the SQLite database and creates the peers table if it does not exist.
 func InitPeersDB(dbPath string) (*PeersDB, error) {
 	db, err := sql.Open("sqlite3", dbPath)
@@ -24,7 +31,9 @@ func InitPeersDB(dbPath string) (*PeersDB, error) {
 	createTable := `CREATE TABLE IF NOT EXISTS peers (
 		name TEXT PRIMARY KEY,
 		addr TEXT NOT NULL,
-		master BOOLEAN NOT NULL DEFAULT 0
+		master BOOLEAN NOT NULL DEFAULT 0,
+		keypub TEXT,
+		token TEXT
 	);`
 	if _, err := db.ExecContext(context.Background(), createTable); err != nil {
 		if cerr := db.Close(); cerr != nil {
@@ -37,10 +46,10 @@ func InitPeersDB(dbPath string) (*PeersDB, error) {
 }
 
 // UpsertPeer inserts or updates a peer in the database.
-func (d *PeersDB) UpsertPeer(peer config.PeerInfo) error {
-	_, err := d.db.ExecContext(context.Background(), `INSERT INTO peers (name, addr, master) VALUES (?, ?, ?)
-		ON CONFLICT(name) DO UPDATE SET addr=excluded.addr, master=excluded.master;`,
-		peer.Name, peer.Addr, peer.Master)
+func (d *PeersDB) UpsertPeer(peer PeerInfoDB) error {
+	_, err := d.db.ExecContext(context.Background(), `INSERT INTO peers (name, addr, master, keypub, token) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET addr=excluded.addr, master=excluded.master, keypub=excluded.keypub, token=excluded.token;`,
+		peer.Name, peer.Addr, peer.Master, peer.KeyPublic, peer.Token)
 	if err != nil {
 		return fmt.Errorf("failed to upsert peer: %w", err)
 	}
@@ -57,8 +66,8 @@ func (d *PeersDB) RemovePeer(name string) error {
 }
 
 // LoadPeersFromDB loads all peers from the database.
-func (d *PeersDB) LoadPeersFromDB() (peers []config.PeerInfo, err error) {
-	rows, err := d.db.QueryContext(context.Background(), `SELECT name, addr, master FROM peers`)
+func (d *PeersDB) LoadPeersFromDB() (peers []PeerInfoDB, err error) {
+	rows, err := d.db.QueryContext(context.Background(), `SELECT name, addr, master, keypub, token FROM peers`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query peers: %w", err)
 	}
@@ -69,8 +78,8 @@ func (d *PeersDB) LoadPeersFromDB() (peers []config.PeerInfo, err error) {
 	}()
 
 	for rows.Next() {
-		var p config.PeerInfo
-		if err := rows.Scan(&p.Name, &p.Addr, &p.Master); err != nil {
+		var p PeerInfoDB
+		if err := rows.Scan(&p.Name, &p.Addr, &p.Master, &p.KeyPublic, &p.Token); err != nil {
 			return nil, fmt.Errorf("failed to scan peer: %w", err)
 		}
 		peers = append(peers, p)

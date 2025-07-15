@@ -4,7 +4,7 @@ package comms
 import (
 	"cloud-agent/internal/agents"
 	"cloud-agent/internal/config"
-	"errors"
+	rpcservice "cloud-agent/internal/rpc"
 	"fmt"
 	"log"
 	"net"
@@ -12,22 +12,31 @@ import (
 	"net/rpc/jsonrpc"
 )
 
-// AgentService provides RPC methods for agent commands.
-type AgentService struct {
-	SelfID    string
-	agentList *agents.AgentList
-	config    *config.Config
+// NetService provides RPC methods for agent commands.
+type NetService struct {
+	SelfID     string
+	agentPool  *agents.AgentPool
+	config     *config.Config
+	RemoteAddr string
+	privateKey *[32]byte
+	publicKey  *[32]byte
 }
 
 // Args represents arguments for RPC methods.
 type Args struct {
-	ID      string
-	Message string
+	//	Sender         string // The name/ID of the sending agent
+	ID             string
+	ClusterToken   string // Shared secret for registration only
+	AgentPublicKey string // Agent's ephemeral public key (base64-encoded)
+	Message        string
+	Address        string
+	Signature      string // HMAC signature for message authentication
 }
 
 // Reply represents a standard reply for RPC methods.
 type Reply struct {
-	Response string
+	Response         string
+	EncryptedHMACKey string // HMAC key encrypted with agent's public key (base64-encoded, for registration)
 }
 
 // ResponseReply represents an acknowledgement reply.
@@ -35,108 +44,9 @@ type ResponseReply struct {
 	Ack bool
 }
 
-// Ping is an exported method for AgentService to satisfy net/rpc requirements.
-// It responds to ping requests from other agents.
-func (a *AgentService) Ping(args Args, reply *Reply) error {
-	// Authorize: only master can send ping
-	agent, ok := a.agentList.Peer[args.ID]
-	log.Printf("[DEBUG ping] agent %s args: %v", args.ID, args)
-	log.Printf("[DEBUG ping] agent %s ok: %v", args.ID, ok)
-	log.Printf("[DEBUG ping] agent %s master: %v", args.ID, agent.Master)
-	if !ok || !agent.Master {
-		return errors.New("unauthorized: only master can send command")
-	}
-
-	reply.Response = "Pong from " + a.SelfID + ": " + args.Message
-	log.Printf("[%s] Pong: %s", a.SelfID, args.Message)
-	return nil
-}
-
-// Register adds a new agent to the agentList with checks.
-func (a *AgentService) Register(args Args, reply *Reply) error {
-	if !a.agentList.IsMaster(a.SelfID) {
-		log.Printf("[Agent] I'm (%s) not a master: uncorrect register request from %s", a.SelfID, args.ID)
-		reply.Response = "I'm not a master"
-		return nil
-	}
-	name := args.ID
-	address := args.Message
-	if !a.authorize(name, address) {
-		return errors.New("authorization failed")
-	}
-	exists, active, reason := a.uniq(name, address)
-	if exists {
-		if active {
-			log.Printf("[SERVER] Registration refused for %s: %s", name, reason)
-			reply.Response = reason
-			return nil
-		}
-		log.Printf("[SERVER] Registration updating for %s: %s", name, reason)
-		oldAgent := a.agentList.Peer[name]
-		if oldAgent.Client != nil {
-			if err := oldAgent.Client.Close(); err != nil {
-				log.Printf("[SERVER] Error closing old client: %v", err)
-			}
-		}
-		client, err := NewAgentClient(address)
-		if err != nil {
-			reply.Response = "failed to create new client connection"
-			return fmt.Errorf("failed to create new client connection: %w", err)
-		}
-		// Create agent with active state and clear error counter
-		agent := agents.Agent{Address: address, Master: false, Client: client}
-		agent.ClearErr() // This sets active=true and errorCounter=0
-		a.agentList.Peer[name] = agent
-		reply.Response = "re-registered agent"
-		log.Printf("[SERVER] re-registered %s with active=%v, errorCount=%d", name, agent.Active(), agent.ErrorCount())
-		if name != a.SelfID {
-			if agent.Master {
-				peerInfo := config.PeerInfo{Name: name, Addr: address, Master: agent.Master}
-				if err := a.config.UpdatePeer(peerInfo); err != nil {
-					log.Printf("[SERVER] Failed to update peer in config: %v", err)
-				} else if err := a.config.SaveConfig(); err != nil {
-					log.Printf("[SERVER] Failed to save config: %v", err)
-				}
-			}
-			a.agentList.Add(name, agent)
-		}
-		return nil
-	}
-	// Add new agent
-	client, err := NewAgentClient(address)
-	if err != nil {
-		reply.Response = "failed to create new client connection"
-		return fmt.Errorf("failed to create new client connection: %w", err)
-	}
-	// Create agent with active state and clear error counter
-	agent := agents.Agent{Address: address, Master: false, Client: client}
-	agent.ClearErr() // This sets active=true and errorCounter=0
-	a.agentList.Peer[name] = agent
-	reply.Response = "registered new agent"
-	log.Printf("[SERVER] registered %s with active=%v, errorCount=%d", name, agent.Active(), agent.ErrorCount())
-	if name != a.SelfID {
-		if agent.Master {
-			peerInfo := config.PeerInfo{Name: name, Addr: address, Master: agent.Master}
-			if err := a.config.UpdatePeer(peerInfo); err != nil {
-				log.Printf("[SERVER] Failed to update peer in config: %v", err)
-			} else if err := a.config.SaveConfig(); err != nil {
-				log.Printf("[SERVER] Failed to save config: %v", err)
-			}
-		}
-		a.agentList.Add(name, agent)
-	}
-	return nil
-}
-
-// authorize is a stub for agent registration authorization.
-func (a *AgentService) authorize(_ string, _ string) bool {
-	// TODO: implement real authorization logic
-	return true
-}
-
 // uniq checks for an existing agent and connection status.
-func (a *AgentService) uniq(name, address string) (exists bool, active bool, reason string) {
-	agent, ok := a.agentList.Peer[name]
+func (a *NetService) uniq(name, address string) (exists bool, active bool, reason string) {
+	agent, ok := a.agentPool.Peer[name]
 	if !ok {
 		return false, false, ""
 	}
@@ -146,7 +56,7 @@ func (a *AgentService) uniq(name, address string) (exists bool, active bool, rea
 			// Try to ping the agent to check if the connection is active
 			pingArgs := Args{ID: name, Message: "ping"}
 			var pingReply Reply
-			err := agent.Client.Call("AgentService.Ping", pingArgs, &pingReply)
+			err := agent.Client.Call("JSONRPCService.Ping", pingArgs, &pingReply)
 			if err == nil {
 				return true, true, "address already used and connection is active"
 			}
@@ -157,7 +67,7 @@ func (a *AgentService) uniq(name, address string) (exists bool, active bool, rea
 	if agent.Client != nil {
 		pingArgs := Args{ID: name, Message: "ping"}
 		var pingReply Reply
-		err := agent.Client.Call("AgentService.Ping", pingArgs, &pingReply)
+		err := agent.Client.Call("JSONRPCService.Ping", pingArgs, &pingReply)
 		if err == nil {
 			return true, true, "name already used at another address and connection is active"
 		}
@@ -165,25 +75,35 @@ func (a *AgentService) uniq(name, address string) (exists bool, active bool, rea
 	return true, false, "name already used at another address but connection is not active"
 }
 
-// StartServer starts the RPC server and returns the listener for graceful shutdown.
-func StartServer(cfg *config.Config, aList *agents.AgentList) (net.Listener, error) {
-	agent := &AgentService{
-		SelfID:    cfg.SelfID,
-		agentList: aList,
-		config:    cfg,
-	}
-	if err := rpc.Register(agent); err != nil {
-		return nil, fmt.Errorf("failed to register RPC service: %w", err)
-	}
+// NewAgentService constructs a new netService with all dependencies.
+func NewNetService(cfg *config.Config, agentPool *agents.AgentPool, pubKey *[32]byte, privKey *[32]byte) *NetService {
+	log.Printf("[DEBUG][NewNetService]: agentPool.Peer[%s] = %+v, Master = %v", cfg.SelfID, agentPool.Peer[cfg.SelfID], agentPool.Peer[cfg.SelfID].Master)
 
-	ln, err := net.Listen("tcp", cfg.TCPAddress)
+	return &NetService{
+		SelfID:     cfg.SelfID,
+		agentPool:  agentPool,
+		config:     cfg,
+		publicKey:  pubKey,
+		privateKey: privKey,
+	}
+}
+
+// StartServer starts the RPC server for the given netService and returns the listener for graceful shutdown.
+func (service *NetService) StartServer() (net.Listener, error) {
+	ln, err := net.Listen("tcp", service.config.TCPAddress)
 	if err != nil {
-		return nil, fmt.Errorf("failed to listen on %s: %w", cfg.TCPAddress, err)
+		return nil, fmt.Errorf("failed to listen on %s: %w", service.config.TCPAddress, err)
 	}
 
 	go func() {
-		log.Printf("[SERVER] Listening on %s", cfg.TCPAddress)
+		log.Printf("[SERVER] Listening on %s", service.config.TCPAddress)
+		log.Printf("[DEBUG] Before In StartServer: agentPool.Peer[%s] = %+v, Master = %v", service.SelfID, service.agentPool.Peer[service.SelfID], service.agentPool.Peer[service.SelfID].Master)
+
+		jsonrpcService := rpcservice.NewJSONRPCService(service.config, service.agentPool, service.publicKey)
+
 		for {
+			log.Printf("[DEBUG] Control point: Master = %v", service.agentPool.Peer[service.SelfID].Master)
+
 			conn, err := ln.Accept()
 			if err != nil {
 				if err.Error() == "use of closed network connection" {
@@ -193,9 +113,18 @@ func StartServer(cfg *config.Config, aList *agents.AgentList) (net.Listener, err
 				log.Println("Accept error:", err)
 				continue
 			}
-			go rpc.ServeCodec(jsonrpc.NewServerCodec(conn))
+			go func() {
+				log.Printf("[DEBUG][SERVER] In StartServer: agentPool.Peer[%s] = %+v, Master = %v", service.SelfID, service.agentPool.Peer[service.SelfID], service.agentPool.Peer[service.SelfID].Master)
+				server := rpc.NewServer()
+				if err := server.Register(jsonrpcService); err != nil {
+					log.Printf("[SERVER] Failed to register RPC service for connection %s: %v", conn.RemoteAddr().String(), err)
+					_ = conn.Close()
+					return
+				}
+				server.ServeCodec(jsonrpc.NewServerCodec(conn))
+			}()
 		}
-		log.Printf("[SERVER] on %s is stopped", cfg.TCPAddress)
+		log.Printf("[SERVER] on %s is stopped", service.config.TCPAddress)
 	}()
 	return ln, nil
 }
