@@ -4,6 +4,7 @@ package master
 import (
 	"cloud-agent/internal/agents"
 	"cloud-agent/internal/comms"
+	"cloud-agent/internal/config"
 	"context"
 	"log"
 	"sync"
@@ -19,27 +20,26 @@ const (
 type Command struct {
 	CommandName string
 	Args        []string
+	Handler     comms.ReplyCallbackFunc
 }
 
 // Service manages agent coordination and command distribution.
 type Service struct {
-	statusLogInterval int
-	SelfID            string
-	active            bool
-	agentList         *agents.AgentList
-	ticker            *time.Ticker
-	ctx               context.Context
-	cancel            context.CancelFunc
-	channel           chan Command
+	active    bool
+	agentPool *agents.AgentPool
+	ticker    *time.Ticker
+	ctx       context.Context
+	cancel    context.CancelFunc
+	channel   chan Command
+	Config    *config.Config
 }
 
 // NewService creates a new Service instance.
-func NewService(id string, alist *agents.AgentList, statusLogInterval int) *Service {
+func NewService(cfg *config.Config, apool *agents.AgentPool) *Service {
 	return &Service{
-		statusLogInterval: statusLogInterval,
-		active:            false,
-		SelfID:            id,
-		agentList:         alist,
+		active:    false,
+		agentPool: apool,
+		Config:    cfg,
 	}
 }
 
@@ -53,11 +53,11 @@ func (s *Service) run() {
 	log.Println("[MASTER] Start master service")
 
 	wg := &sync.WaitGroup{}
-	s.ticker = time.NewTicker(time.Duration(s.statusLogInterval) * time.Second)
+	s.ticker = time.NewTicker(time.Duration(s.Config.StatusLogInterval) * time.Second)
 
-	agent := s.agentList.Peer[s.SelfID]
-	agent.Master = false
-	s.agentList.Peer[s.SelfID] = agent
+	// agent := s.agentPool.Peer[s.Config.SelfID]
+	//agent.Master = false // AAAAAAAAAAAA
+	// s.agentPool.Peer[s.Config.SelfID] = agent
 
 	defer s.Stop()
 
@@ -71,16 +71,17 @@ func (s *Service) run() {
 			s.exec("", command)
 			wg.Done()
 		case <-s.ticker.C:
-			log.Println("ping")
-			s.channel <- Command{CommandName: "ping"}
+			log.Printf("[MASTER] Periodical ping from master to all")
+			s.channel <- Command{CommandName: "JSONRPCService.Ping"}
 		}
 	}
 }
 
-// exec executes a command on a specific agent or all agents.
+// exec выполняет указанную команду на конкретном агенте или на всех активных.
 func (s *Service) exec(agentname string, command Command) {
 	if agentname != "" {
-		agent := s.agentList.Peer[agentname]
+		// Выполняем команду на определённом агенте
+		agent := s.agentPool.Peer[agentname]
 		if agent.Client == nil {
 			client, err := comms.NewAgentClient(agent.Address)
 			if err != nil {
@@ -88,17 +89,18 @@ func (s *Service) exec(agentname string, command Command) {
 				return
 			}
 			agent.Client = client
-			s.agentList.Peer[agentname] = agent
+			s.agentPool.Peer[agentname] = agent
 		}
 
 		log.Println("[MASTER] Send command for "+agentname+": ", command)
-		comms.SendAsync(agent.Client, command.CommandName, pingReply)
+		comms.SendAsync(agent.Client, command.CommandName, s.Config.SelfID, s.Config.ClusterToken, command.Handler)
 	} else {
+		// Выполняем команду на всех активных агентах
 		log.Println("[MASTER] Command for all: ", command)
-		for id := range s.agentList.Peer {
-			agent := s.agentList.Peer[id]
-			log.Printf("[MASTER] Checking agent %s: active=%v, address=%s, client=%v", id, agent.Active(), agent.Address, agent.Client != nil)
-			if !s.agentList.Active(id) {
+		for id := range s.agentPool.Peer {
+			agent := s.agentPool.Peer[id]
+			log.Printf("[MASTER] Checking agent %s: active=%v, address=%s, client=%v", id, s.agentPool.Active(id), agent.Address, agent.Client != nil)
+			if !s.agentPool.Active(id) {
 				log.Printf("[MASTER] Skipping inactive agent %s", id)
 				continue
 			}
@@ -107,27 +109,110 @@ func (s *Service) exec(agentname string, command Command) {
 				client, err := comms.NewAgentClient(agent.Address)
 				if err != nil {
 					log.Printf("[MASTER] Failed to connect with agent %s: %v", id, err)
-					agent.SetErr()
-					s.agentList.Peer[id] = agent
+					s.agentPool.SetErr(id)
+					s.agentPool.Peer[id] = agent
 					continue
 				}
 				agent.Client = client
-				s.agentList.Peer[id] = agent
+				s.agentPool.Peer[id] = agent
 			}
 
 			agentPtr := &agent
-			comms.SendAsyncWithErrors(agent.Client, command.CommandName, func(reply *comms.Reply, err error) {
+			comms.SendAsyncWithErrors(agent.Client, command.CommandName, s.Config.SelfID, s.Config.ClusterToken, func(reply *comms.Reply, err error) {
 				if err != nil {
-					agentPtr.SetErr()
-					log.Printf("[MASTER] Ping error for %s (err count: %d): %v", id, agentPtr.ErrorCount(), err)
-					if !agentPtr.Active() {
+					s.agentPool.SetErr(id)
+					log.Printf("[MASTER] Command error for %s (err count: %d): %v", id, s.agentPool.ErrorCount(id), err)
+					if !s.agentPool.Active(id) {
 						log.Printf("[MASTER] Marking agent %s as inactive", id)
 					}
 				} else {
-					agentPtr.ClearErr()
+					s.agentPool.ClearErr(id)
 					log.Printf("[MASTER] Reply from %s: %s", id, reply.Response)
 				}
-				s.agentList.Peer[id] = *agentPtr
+				s.agentPool.Peer[id] = *agentPtr
+			})
+		}
+	}
+}
+
+// ping отправляет команду ping на выбранный агент или на всех агентов.
+func (s *Service) ping(agentname string) {
+	command := Command{
+		CommandName: "ping",
+		//        Handler:     pingReply,
+	}
+	s.exec(agentname, command)
+}
+
+// // pingReply представляет собой callback-обработчик для ping-команды.
+// func pingReply(reply *comms.Reply, err error) {
+// 	if err != nil {
+// 		log.Printf("[PING REPLY ERROR] Error occurred during ping request: %v", err)
+// 		return
+// 	}
+// 	log.Printf("[PING REPLY SUCCESS] Response received: %s", reply.Response)
+// }
+
+// // Command описывает общую структуру команды, включающую название и обработчик.
+// type Command struct {
+// 	CommandName string
+// 	Handler     comms.ReplyCallbackFunc
+// }
+
+// ReplyCallbackFunc — тип обратного вызова для обработки ответов от агентов.
+// type ReplyCallbackFunc func(*comms.Reply, error)
+
+// exec executes a command on a specific agent or all agents.
+func (s *Service) exec2(agentname string, command Command) {
+	if agentname != "" {
+		agent := s.agentPool.Peer[agentname]
+		if agent.Client == nil {
+			client, err := comms.NewAgentClient(agent.Address)
+			if err != nil {
+				log.Printf("[MASTER] Failed to connect with agent %s: %v", agentname, err)
+				return
+			}
+			agent.Client = client
+			s.agentPool.Peer[agentname] = agent
+		}
+
+		log.Println("[MASTER] Send command for "+agentname+": ", command)
+		comms.SendAsync(agent.Client, command.CommandName, s.Config.SelfID, s.Config.ClusterToken, pingReply)
+	} else {
+		log.Println("[MASTER] Command for all: ", command)
+		for id := range s.agentPool.Peer {
+			agent := s.agentPool.Peer[id]
+			log.Printf("[MASTER] Checking agent %s: active=%v, address=%s, client=%v", id, s.agentPool.Active(id), agent.Address, agent.Client != nil)
+			if !s.agentPool.Active(id) {
+				log.Printf("[MASTER] Skipping inactive agent %s", id)
+				continue
+			}
+
+			if agent.Client == nil {
+				client, err := comms.NewAgentClient(agent.Address)
+				if err != nil {
+					log.Printf("[MASTER] Failed to connect with agent %s: %v", id, err)
+					s.agentPool.SetErr(id)
+					s.agentPool.Peer[id] = agent
+					continue
+				}
+				agent.Client = client
+				s.agentPool.Peer[id] = agent
+			}
+
+			agentPtr := &agent
+			comms.SendAsyncWithErrors(agent.Client, command.CommandName, s.Config.SelfID, s.Config.ClusterToken, func(reply *comms.Reply, err error) {
+				if err != nil {
+					s.agentPool.SetErr(id)
+					log.Printf("[MASTER] Ping error for %s (err count: %d): %v", id, s.agentPool.ErrorCount(id), err)
+					if !s.agentPool.Active(id) {
+						log.Printf("[MASTER] Marking agent %s as inactive", id)
+					}
+				} else {
+					s.agentPool.ClearErr(id)
+					log.Printf("[MASTER] Reply from %s: %s", id, reply.Response)
+				}
+				s.agentPool.Peer[id] = *agentPtr
 			})
 		}
 	}
@@ -147,9 +232,9 @@ func (s *Service) Stop() {
 	log.Println("[MASTER] Stop master service")
 	s.ticker.Stop()
 
-	agent := s.agentList.Peer[s.SelfID]
+	agent := s.agentPool.Peer[s.Config.SelfID]
 	agent.Master = false
-	s.agentList.Peer[s.SelfID] = agent
+	s.agentPool.Peer[s.Config.SelfID] = agent
 
 	s.active = false
 	if s.cancel != nil {

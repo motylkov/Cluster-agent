@@ -29,6 +29,7 @@ type Config struct {
 	ElectionDelay     int        `yaml:"election_delay"`
 	StatusLogInterval int        `yaml:"status_log_interval"`
 	MasterTimeout     int        `yaml:"master_timeout"` // in seconds
+	ClusterToken      string     `yaml:"cluster_token"`
 }
 
 // LoadConfig loads configuration from a YAML file and sets default values.
