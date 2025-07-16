@@ -55,9 +55,9 @@ func (s *Service) run() {
 	wg := &sync.WaitGroup{}
 	s.ticker = time.NewTicker(time.Duration(s.Config.StatusLogInterval) * time.Second)
 
-	agent := s.agentPool.Peer[s.Config.SelfID]
-	agent.Master = false
-	s.agentPool.Peer[s.Config.SelfID] = agent
+	// agent := s.agentPool.Peer[s.Config.SelfID]
+	//agent.Master = false // AAAAAAAAAAAA
+	// s.agentPool.Peer[s.Config.SelfID] = agent
 
 	defer s.Stop()
 
@@ -72,7 +72,7 @@ func (s *Service) run() {
 			wg.Done()
 		case <-s.ticker.C:
 			log.Printf("[MASTER] Periodical ping from master to all")
-			s.channel <- Command{CommandName: "ping"}
+			s.channel <- Command{CommandName: "JSONRPCService.Ping"}
 		}
 	}
 }

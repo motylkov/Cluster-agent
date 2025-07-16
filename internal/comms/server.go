@@ -95,9 +95,11 @@ func (service *NetService) StartServer() (net.Listener, error) {
 		return nil, fmt.Errorf("failed to listen on %s: %w", service.config.TCPAddress, err)
 	}
 
+	log.Printf("[DEBUG] Before gorutine in StartServer: agentPool.Peer[%s] = %+v, Master = %v", service.SelfID, service.agentPool.Peer[service.SelfID], service.agentPool.Peer[service.SelfID].Master)
+
 	go func() {
 		log.Printf("[SERVER] Listening on %s", service.config.TCPAddress)
-		log.Printf("[DEBUG] Before In StartServer: agentPool.Peer[%s] = %+v, Master = %v", service.SelfID, service.agentPool.Peer[service.SelfID], service.agentPool.Peer[service.SelfID].Master)
+		log.Printf("[DEBUG] In 1 gorutine StartServer: agentPool.Peer[%s] = %+v, Master = %v", service.SelfID, service.agentPool.Peer[service.SelfID], service.agentPool.Peer[service.SelfID].Master)
 
 		jsonrpcService := rpcservice.NewJSONRPCService(service.config, service.agentPool, service.publicKey)
 
@@ -114,7 +116,7 @@ func (service *NetService) StartServer() (net.Listener, error) {
 				continue
 			}
 			go func() {
-				log.Printf("[DEBUG][SERVER] In StartServer: agentPool.Peer[%s] = %+v, Master = %v", service.SelfID, service.agentPool.Peer[service.SelfID], service.agentPool.Peer[service.SelfID].Master)
+				log.Printf("[DEBUG] In 2 gorutine StartServer: agentPool.Peer[%s] = %+v, Master = %v", service.SelfID, service.agentPool.Peer[service.SelfID], service.agentPool.Peer[service.SelfID].Master)
 				server := rpc.NewServer()
 				if err := server.Register(jsonrpcService); err != nil {
 					log.Printf("[SERVER] Failed to register RPC service for connection %s: %v", conn.RemoteAddr().String(), err)
