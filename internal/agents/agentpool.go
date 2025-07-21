@@ -235,6 +235,14 @@ func (pool *AgentPool) SetToken(id, token string) {
 	agent := pool.Peer[id]
 	agent.Token = token
 	pool.Peer[id] = agent
+
+	// update in DB
+	if pool.DbActive {
+		err := pool.db.UpdateToken(id, token)
+		if err != nil {
+			log.Printf("[AGENTS] Failed to update peer token in DB: %v", err)
+		}
+	}
 }
 
 // Masters returns a slice of agent names that are marked as master.

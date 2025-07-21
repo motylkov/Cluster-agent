@@ -34,14 +34,14 @@ func (a *JSONRPCService) Ping(args struct {
 }, reply *struct {
 	Response string
 }) error {
-	log.Printf("[PING] Received ping from: %s, remote address: %s, args: %+v", args.Sender, a.RemoteAddr, args)
-	if !auth.VerifyHMAC(a.agentPool.GetToken, args.Sender, args.Message, args.Signature) {
+	log.Printf("[PING] Received ping from: %s, remote address: %s, args: %+v", args.ID, a.RemoteAddr, args)
+	if !auth.VerifyHMAC(a.agentPool.GetToken, args.ID, args.Message, args.Signature) {
 		return errors.New("unauthorized: invalid HMAC signature")
 	}
 	// Authorize: only master can send ping
-	agent, ok := a.agentPool.Peer[args.Sender]
-	log.Printf("[DEBUG ping] agent %s ok: %v", args.Sender, ok)
-	log.Printf("[DEBUG ping] agent %s master: %v", args.Sender, agent.Master)
+	agent, ok := a.agentPool.Peer[args.ID]
+	log.Printf("[DEBUG ping] agent %s ok: %v", args.ID, ok)
+	log.Printf("[DEBUG ping] agent %s master: %v", args.ID, agent.Master)
 	if !ok || !agent.Master {
 		return errors.New("unauthorized: only master can send command")
 	}
@@ -53,10 +53,11 @@ func (a *JSONRPCService) Ping(args struct {
 
 func (a *JSONRPCService) Register(args struct {
 	ID string
-	//	Sender         string
+
 	ClusterToken   string
 	AgentPublicKey string
 	Message        string
+	Address        string
 	Signature      string
 }, reply *struct {
 	Response         string
@@ -76,21 +77,13 @@ func (a *JSONRPCService) Register(args struct {
 		return errors.New("unauthorized: invalid HMAC signature for registration")
 	}
 
-	// a.agentPool.GetToken
-
-	// commented for debug
-	//log.Printf("[DEBUG] Master is: %v", a.agentPool.Peer[a.SelfID].Master)
-	//if !a.agentPool.IsMaster(a.SelfID) {
-	//	log.Printf("[Agent] I'm (%s) not a master: uncorrect register request from %s", a.SelfID, args.ID)
-	//	reply.Response = "I'm not a master"
-	//	return nil
-	//}
-
-	// name := args.ID
-	// address := args.Message
-	// if !auth.Authorize(name, address) {
-	// 	return errors.New("authorization failed")
-	// }
+	// Check if this agent is a master
+	log.Printf("[DEBUG] Master is: %v", a.agentPool.Peer[a.SelfID].Master)
+	if !a.agentPool.IsMaster(a.SelfID) {
+		log.Printf("[Agent] I'm (%s) not a master: incorrect register request from %s", a.SelfID, args.ID)
+		reply.Response = "I'm not a master"
+		return nil
+	}
 
 	// Decode agent's public key
 	var agentPubKey [32]byte
@@ -109,32 +102,25 @@ func (a *JSONRPCService) Register(args struct {
 	hmacKey := auth.GenerateRandomToken(32)
 	hmacKeyBytes, _ := base64.StdEncoding.DecodeString(hmacKey)
 
-	// // Encrypt the HMAC key with the agent's public key
+	// Encrypt the HMAC key with the agent's public key
 	encryptedHMAC, err := auth.EncryptWithPublicKey(hmacKeyBytes, &agentPubKey)
 	if err != nil {
 		reply.Response = "failed to encrypt HMAC key"
 		return nil
 	}
 
-	// // Store the agent's public key and HMAC key in agentList/DB
-	// log.Println("[------------------------------------]")
-	// log.Printf("[DEBUG] Master set false for %s", name)
-	// log.Println("[------------------------------------]")
-	// agent := agents.Agent{Address: address, Master: false, Token: hmacKey, PublicKey: args.AgentPublicKey}
-	// a.agentPool.ClearErr(name)
-	// a.agentPool.Peer[name] = agent
-	// if a.agentPool.DbActive {
-	// 	err := a.agentPool.UpsertPeer(config.PeerInfo{
-	// 		Name:   name,
-	// 		Addr:   address,
-	// 		Master: false,
-	// 		Token:  hmacKey,
-	// 		// Optionally add PublicKey to PeerInfo if you extend the schema
-	// 	})
-	// 	if err != nil {
-	// 		log.Printf("[SERVER] Failed to upsert peer in DB: %v", err)
-	// 	}
-	// }
+	// Store the agent's public key and HMAC key in agentList/DB
+
+	// Create new agent entry
+	agent := agents.Agent{
+		Address:   args.Address,
+		Master:    false,
+		Token:     hmacKey,
+		KeyPublic: args.AgentPublicKey,
+	}
+
+	// Add or update the agent in the pool
+	a.agentPool.Upsert(args.ID, agent)
 
 	reply.Response = "registered new agent"
 	reply.EncryptedHMACKey = encryptedHMAC

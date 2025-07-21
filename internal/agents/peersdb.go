@@ -56,6 +56,16 @@ func (d *PeersDB) UpsertPeer(peer PeerInfoDB) error {
 	return nil
 }
 
+// UpdateToken updates the token for a peer in the database.
+func (d *PeersDB) UpdateToken(ID, token string) error {
+	_, err := d.db.ExecContext(context.Background(), `UPDATE peers SET token=? WHERE name=?`,
+		token, ID)
+	if err != nil {
+		return fmt.Errorf("failed to update peer token: %w", err)
+	}
+	return nil
+}
+
 // RemovePeer deletes a peer from the database by name.
 func (d *PeersDB) RemovePeer(name string) error {
 	_, err := d.db.ExecContext(context.Background(), `DELETE FROM peers WHERE name = ?`, name)

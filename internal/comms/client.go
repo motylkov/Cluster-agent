@@ -13,8 +13,6 @@ import (
 	"net"
 	"net/rpc"
 	"net/rpc/jsonrpc"
-	"os"
-	"strings"
 )
 
 var selfToken string // Package-level variable to store the agent's HMAC token
@@ -56,7 +54,7 @@ func Send(c *rpc.Client, method, sender, token string) (reply Reply, err error) 
 	if token == "" {
 		token = selfToken
 	}
-	log.Printf("[DEBUG][CLIENT] HMAC token for sender %s: %s", sender, token)
+	log.Printf("[CLIENT] Send: HMAC token for sender %s: %s", sender, token)
 	signature := auth.ComputeHMAC(sender, method, token)
 	args := Args{Message: method, ID: sender, Signature: signature}
 	err = SendRPC(c, method, args, &reply)
@@ -75,7 +73,7 @@ func SendAsync(c *rpc.Client, method, sender, token string, handle func(*Reply, 
 	if token == "" {
 		token = selfToken
 	}
-	log.Printf("[DEBUG][CLIENT] HMAC token for sender %s: %s", sender, token)
+	log.Printf("[CLIENT] SendAsync: HMAC token for sender %s: %s", sender, token)
 	signature := auth.ComputeHMAC(sender, method, token)
 	args := Args{Message: method, ID: sender, Signature: signature}
 	var reply Reply
@@ -99,7 +97,7 @@ func SendAsyncWithErrors(c *rpc.Client, method, sender, token string, handle fun
 	if token == "" {
 		token = selfToken
 	}
-	log.Printf("[DEBUG][CLIENT] HMAC token for sender %s: %s", sender, token)
+	log.Printf("[CLIENT] SendAsyncWithErrors: HMAC token for sender %s: %s", sender, token)
 	signature := auth.ComputeHMAC(sender, method, token)
 	args := Args{Message: method, ID: sender, Signature: signature}
 	var reply Reply
@@ -110,30 +108,9 @@ func SendAsyncWithErrors(c *rpc.Client, method, sender, token string, handle fun
 	}()
 }
 
-func loadSelfToken(sender string) string {
-	filename := sender + ".token"
-	data, err := os.ReadFile(filename)
-	if err == nil {
-		token := strings.TrimSpace(string(data))
-		log.Printf("[DEBUG][CLIENT] Loaded HMAC token from file: %s", token)
-		return token
-	}
-	return ""
-}
-
-func saveSelfToken(sender, token string) {
-	filename := sender + ".token"
-	err := os.WriteFile(filename, []byte(token+"\n"), 0600)
-	if err != nil {
-		log.Printf("[DEBUG][CLIENT] Failed to save HMAC token to file: %v", err)
-	} else {
-		log.Printf("[DEBUG][CLIENT] Saved HMAC token to file: %s", filename)
-	}
-}
-
-// On startup, try to load the token from file
-func InitSelfToken(sender string) {
-	selfToken = loadSelfToken(sender)
+func (service *NetService) saveToken(sender, token string) {
+	log.Printf("[CLIENT] saveToken %s %s", sender, token)
+	service.agentPool.SetToken(sender, token)
 }
 
 // RegisterClient sends a registration message to the server with the client's name and address.
@@ -146,9 +123,7 @@ func (service *NetService) RegisterClient(c *rpc.Client, sender, address, token 
 	log.Printf("[CLIENT] publicKey64 %s", publicKey64)
 
 	log.Printf("[CLIENT] Sending registration from %s addr %s to master", sender, address)
-	// signature := auth.ComputeHMAC(sender, selfPubKeyB64, token)
 	signature := auth.ComputeHMAC(sender, publicKey64, token)
-	//	args := Args{ID: sender, Sender: sender, ClusterToken: token, AgentPublicKey: selfPubKeyB64, Message: address, Signature: signature}
 	args := Args{ID: sender, ClusterToken: token, AgentPublicKey: publicKey64, Address: address, Signature: signature}
 
 	var reply Reply
@@ -162,15 +137,12 @@ func (service *NetService) RegisterClient(c *rpc.Client, sender, address, token 
 			log.Printf("[CLIENT] Failed to decrypt HMAC key from master: %v", err)
 		} else {
 			selfToken = base64.StdEncoding.EncodeToString(decrypted)
-			saveSelfToken(sender, selfToken)
+			// save token in agentPool and DB
+			service.agentPool.SetToken(sender, selfToken)
 			log.Printf("[CLIENT] Registered and received HMAC token: %s", selfToken)
 		}
-	} else if reply.Response != "I'm not a master" && reply.Response != "" {
-		selfToken = reply.Response
-		saveSelfToken(sender, selfToken)
-		log.Printf("[DEBUG][CLIENT] Registered and received HMAC token: %s", selfToken)
 	} else {
-		log.Printf("[DEBUG][CLIENT] Registration failed or not a master: %s", reply.Response)
+		log.Printf("[CLIENT] Registration failed: %s", reply.Response)
 	}
 	return reply.Response, nil
 }
